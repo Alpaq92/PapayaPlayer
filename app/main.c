@@ -696,9 +696,9 @@ draw_settings(struct reaktor_context *ctx, float w)
         ui.settings_open = 0;
         return;
     }
-    ui.settings_rect = reaktor_rect(w - SETTINGS_W - 8.0f, TOP_H, SETTINGS_W, 148.0f);
+    ui.settings_rect = reaktor_rect(w - SETTINGS_W - 8.0f, TOP_H + 8.0f, SETTINGS_W, 148.0f);
     reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 10.0f, reaktor_rgba(24, 24, 24, 235));
-    REAKTOR_COLUMN(.w = SETTINGS_W - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = TOP_H + 12.0f, .gap = 4.0f) {
+    REAKTOR_COLUMN(.w = SETTINGS_W - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = TOP_H + 20.0f, .gap = 4.0f) {
         reaktor_label(&(reaktor_label_spec){
             .text = "Title bar", .name = "titlebar-heading", .color = "#9a9a9a", .box = { .h = 24.0f } });
         REAKTOR_ROW(.h = 32.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
@@ -928,7 +928,8 @@ stop(App *app)
 /* Our additions to Reaktor's stylesheet. */
 static const char papaya_css[] =
     ".ghost { background-color: rgba(0, 0, 0, 0); color: #f2f2f2; border-radius: 0.5rem; padding: 8px 10px; }\n"
-    ".ghost:hover { background-color: var(--button-hover); }\n";
+    ".ghost:hover { background-color: var(--button-hover); }\n"
+    "select { background-color: rgba(40, 40, 40, 0.55); color: #f2f2f2; }\n";
 
 int
 main(int argc, char **argv)
