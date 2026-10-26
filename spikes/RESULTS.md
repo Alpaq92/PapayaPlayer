@@ -1,8 +1,10 @@
 # Phase 0 spike results
 
 Run on 2026-10-26 on Windows 11 x64 (this machine): clang-cl 23.1.4, Rust 1.99.1
-(MSVC), CMake 4.4.3, Visual Studio 2026 toolset. Other platforms run in CI
-(`.github/workflows/`), which needs the repository on GitHub first.
+(MSVC), CMake 4.4.3, Visual Studio 2026 toolset. Other platforms in CI at
+https://github.com/Alpaq92/PapayaPlayer: all 15 jobs green on `662d9eb`
+(Windows, macOS, Linux shared + static, ASan/UBSan, TSan, lint, three BSDs),
+2–5 minutes each with ccache.
 
 | Spike | Result | Evidence / next step |
 |---|---|---|
@@ -16,5 +18,5 @@ Run on 2026-10-26 on Windows 11 x64 (this machine): clang-cl 23.1.4, Rust 1.99.1
 | **S5** Reaktor CSS | ⚠️ Supports `border-radius` (per corner), borders, `background-color`, `opacity`, sizes, margins, padding, media queries. **No gradients, no `box-shadow`** | Pills and outlined rounded bars work in CSS. Gradients: draw with Nuklear's multi-colour rect (`nk_fill_rect_multi_color`) in our widgets, or add gradients to Reaktor's CSS |
 | **S6** miniaudio passthrough | ❌ miniaudio handles PCM only (`u8`, `s16`, `s24`, `s32`, `f32`); no IEC 61937 / non-PCM output | Passthrough (phase 11) needs its own small WASAPI / CoreAudio / ALSA backend, as planned. BSD backends confirmed in its docs: OSS (FreeBSD), sndio (OpenBSD), audio(4) (NetBSD) |
 | **S7** cros-codecs C ABI | ⚠️ cros-codecs is a Rust API with no C ABI | Our own small Rust crate exposing the parsers and VA-API decoder to C (Rust and Corrosion already work, see below). Build on BSD unverified |
-| **S8** BSD baseline | ⏳ Pending: `.github/workflows/bsd.yml` builds and tests on FreeBSD 15.1, OpenBSD 7.9 and NetBSD 11.0 once the repository is on GitHub | Reaktor itself already builds on all three in its own CI |
+| **S8** BSD baseline | ✅ **Pass.** SDL3, Reaktor, Rust (Corrosion), the core library and tests build and pass on FreeBSD 15.1, NetBSD 11.0 and OpenBSD 7.9, shared and static (CI run on commit `662d9eb`). Ittiam libraries not yet built on BSD (they join the build in phase 2) | `.github/workflows/bsd.yml` |
 | Build skeleton | ✅ Shared (`papaya_core.dll`, Rust `cdylib`) and static (single exe) builds, unit tests (greatest + CTest), Rust crate through Corrosion, Reaktor app window, license check, clang-tidy clean | `./build.ps1 -Test`, `./build.ps1 -Out build-static -Test -DPAPAYA_SHARED_LIBS=OFF` |
