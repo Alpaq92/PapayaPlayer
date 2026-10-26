@@ -100,7 +100,9 @@ papaya_queue_push(papaya_queue *q, void *item, size_t bytes, int64_t duration)
     e = q->spare;
     if (e)
         q->spare = e->next;
-    else if (!(e = malloc(sizeof *e))) {
+    else
+        e = malloc(sizeof *e);
+    if (!e) {
         papaya_mutex_unlock(&q->lock);
         return PAPAYA_QUEUE_ABORTED;
     }

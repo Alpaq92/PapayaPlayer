@@ -11,6 +11,10 @@ add_library(papaya_core
     io/io.c
     demux/demux.c
     demux/webm/webm.cc
+    decode/decode.c
+    decode/sw/flac/flac.c
+    decode/sw/opus/opus.c
+    decode/sw/vorbis/vorbis.c
     $<TARGET_OBJECTS:mkvparser>)
 generate_export_header(papaya_core
     BASE_NAME papaya
@@ -18,7 +22,8 @@ generate_export_header(papaya_core
 target_include_directories(papaya_core PUBLIC
     include
     "${CMAKE_CURRENT_BINARY_DIR}/include")
-target_include_directories(papaya_core PRIVATE demux "${PROJECT_SOURCE_DIR}/third_party/libwebm")
+target_include_directories(papaya_core PRIVATE demux decode "${PROJECT_SOURCE_DIR}/third_party/libwebm")
+target_link_libraries(papaya_core PRIVATE opus vorbis FLAC Ogg::ogg)
 if(NOT PAPAYA_SHARED_LIBS)
     target_compile_definitions(papaya_core PUBLIC PAPAYA_STATIC_DEFINE)
 endif()

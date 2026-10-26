@@ -25,5 +25,10 @@ function(papaya_warnings target)
     if(PAPAYA_SANITIZE)
         list(JOIN PAPAYA_SANITIZE "," _san)
         target_compile_options(${target} PRIVATE -fsanitize=${_san} -fno-omit-frame-pointer)
+        if("undefined" IN_LIST PAPAYA_SANITIZE)
+            # The vptr check needs the C++ UBSan runtime, which C programs
+            # linking a library with C++ inside (the WebM wrapper) lack.
+            target_compile_options(${target} PRIVATE -fno-sanitize=vptr)
+        endif()
     endif()
 endfunction()

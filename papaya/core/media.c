@@ -41,7 +41,7 @@ papaya_buffer_alloc(size_t size)
         return NULL;
     b = (papaya_buffer *)mem;
     atomic_init(&b->refs, 1);
-    b->data = (uint8_t *)(((uintptr_t)mem + head + PAPAYA_ALIGN - 1) & ~(uintptr_t)(PAPAYA_ALIGN - 1));
+    b->data = mem + head + (PAPAYA_ALIGN - (uintptr_t)(mem + head) % PAPAYA_ALIGN) % PAPAYA_ALIGN;
     b->size = size;
     b->free_fn = free_owned;
     b->opaque = mem;

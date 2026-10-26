@@ -53,7 +53,7 @@ main(int argc, char **argv)
             printf(" [%s]", s->language);
         printf("\n");
     }
-    if (argc > 2 && papaya_demux_seek(d, (int64_t)(atof(argv[2]) * 1e6)) != 0)
+    if (argc > 2 && papaya_demux_seek(d, (int64_t)(strtod(argv[2], NULL) * 1e6)) != 0)
         printf("seek failed\n");
     while ((r = papaya_demux_read(d, &p)) == 0) {
         int s = p->stream;

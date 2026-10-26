@@ -200,10 +200,13 @@ queue_flush_bumps_serial_and_frees(void)
     PASS();
 }
 
+enum { PC_ITEMS = 10000 };
+
 typedef struct {
     papaya_queue *q;
     int n;
     int sum;
+    int values[PC_ITEMS];
 } pc_args;
 
 static int
@@ -211,9 +214,11 @@ producer(void *p)
 {
     pc_args *a = p;
 
-    for (intptr_t i = 1; i <= a->n; i++)
-        if (papaya_queue_push(a->q, (void *)i, 1, 1000) != PAPAYA_QUEUE_OK)
+    for (int i = 0; i < a->n; i++) {
+        a->values[i] = i + 1;
+        if (papaya_queue_push(a->q, &a->values[i], 1, 1000) != PAPAYA_QUEUE_OK)
             return 1;
+    }
     return 0;
 }
 
@@ -226,9 +231,9 @@ consumer(void *p)
     for (int i = 0; i < a->n; i++) {
         if (papaya_queue_pop(a->q, &item, NULL, -1) != PAPAYA_QUEUE_OK)
             return 1;
-        if ((intptr_t)item != i + 1)
+        if (*(int *)item != i + 1)
             return 2;
-        a->sum += (int)(intptr_t)item;
+        a->sum += *(int *)item;
     }
     return 0;
 }
@@ -237,15 +242,18 @@ TEST
 queue_limits_block_producer(void)
 {
     /* At most 4 items or 3 ms queued: the producer must wait for the consumer. */
-    pc_args a = { papaya_queue_new((papaya_queue_limits){ .max_duration = 3000, .max_items = 4 }, NULL),
-                  10000, 0 };
-    papaya_thread *pt = papaya_thread_start(producer, &a, "producer");
-    papaya_thread *ct = papaya_thread_start(consumer, &a, "consumer");
+    static pc_args a;
+    papaya_thread *pt, *ct;
 
+    a.q = papaya_queue_new((papaya_queue_limits){ .max_duration = 3000, .max_items = 4 }, NULL);
+    a.n = PC_ITEMS;
+    a.sum = 0;
+    pt = papaya_thread_start(producer, &a, "producer");
+    ct = papaya_thread_start(consumer, &a, "consumer");
     ASSERT(pt && ct);
     ASSERT_EQ(0, papaya_thread_join(pt));
     ASSERT_EQ(0, papaya_thread_join(ct));
-    ASSERT_EQ(10000 * 10001 / 2, a.sum);
+    ASSERT_EQ(PC_ITEMS * (PC_ITEMS + 1) / 2, a.sum);
     papaya_queue_free(&a.q);
     PASS();
 }

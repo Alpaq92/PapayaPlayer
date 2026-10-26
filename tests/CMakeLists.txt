@@ -27,3 +27,15 @@ target_compile_definitions(demux_test PRIVATE
 target_link_libraries(demux_test PRIVATE papaya_core)
 papaya_warnings(demux_test)
 add_test(NAME demux_test COMMAND demux_test)
+
+add_executable(decode_test unit/decode_test.c)
+target_include_directories(decode_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_compile_definitions(decode_test PRIVATE
+    PAPAYA_LIBWEBM_TESTDATA="${PROJECT_SOURCE_DIR}/third_party/libwebm/testing/testdata")
+# The encoders are only for building test input.
+target_link_libraries(decode_test PRIVATE papaya_core vorbisenc vorbis FLAC)
+if(UNIX)
+    target_link_libraries(decode_test PRIVATE m)
+endif()
+papaya_warnings(decode_test)
+add_test(NAME decode_test COMMAND decode_test)
