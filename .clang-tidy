@@ -11,4 +11,5 @@ Checks: >
   performance-*,
   portability-*
 WarningsAsErrors: '*'
-HeaderFilterRegex: '(papaya|app|tests)/'
+# Either path separator, so headers are checked on Windows too.
+HeaderFilterRegex: '(papaya|app|tests)[/\\]'

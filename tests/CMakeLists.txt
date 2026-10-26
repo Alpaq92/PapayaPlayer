@@ -16,7 +16,7 @@ endif()
 
 add_executable(deps_test unit/deps_test.c)
 target_include_directories(deps_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
-target_link_libraries(deps_test PRIVATE Ogg::ogg vorbis opus FLAC papaya_miniaudio dav1d)
+target_link_libraries(deps_test PRIVATE Ogg::ogg vorbis opus FLAC papaya_miniaudio dav1d vpx)
 papaya_warnings(deps_test)
 add_test(NAME deps_test COMMAND deps_test)
 

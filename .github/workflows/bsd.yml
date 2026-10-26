@@ -76,7 +76,7 @@ jobs:
           case "$(uname -s)" in
             FreeBSD)
               sudo env IGNORE_OSVERSION=yes PKG_CACHEDIR="$PWD/.pkgcache" pkg install -y \
-                cmake-core ninja ccache pkgconf rust nasm dbus \
+                cmake-core ninja ccache pkgconf rust nasm perl5 dbus \
                 libX11 libXext libXcursor libXi libXfixes libXrandr libXrender libXtst \
                 libxkbcommon wayland wayland-protocols libglvnd </dev/null ;;
             OpenBSD)
@@ -87,7 +87,7 @@ jobs:
               sudo rm -rf /var/db/pkgin/cache
               sudo ln -s "$PWD/.pkgcache" /var/db/pkgin/cache
               sudo -E pkgin -y update </dev/null
-              sudo -E pkgin -y install cmake ninja-build ccache pkgconf rust nasm dbus libxkbcommon wayland \
+              sudo -E pkgin -y install cmake ninja-build ccache pkgconf rust nasm perl dbus libxkbcommon wayland \
                 wayland-protocols clang lld llvm </dev/null ;;
           esac
           sudo chown -R "$(id -u)" .pkgcache

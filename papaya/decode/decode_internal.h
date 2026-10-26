@@ -25,6 +25,7 @@ extern const papaya_decode_backend papaya_decode_opus;
 extern const papaya_decode_backend papaya_decode_vorbis;
 extern const papaya_decode_backend papaya_decode_flac;
 extern const papaya_decode_backend papaya_decode_dav1d;
+extern const papaya_decode_backend papaya_decode_vpx;
 
 /* Reorders interleaved float samples from Vorbis channel order (also Opus
  * mapping family 1) to WAVE order, in place. */

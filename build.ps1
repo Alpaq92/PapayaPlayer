@@ -20,6 +20,11 @@ $clang = Get-Command clang-cl -ErrorAction SilentlyContinue
 $llvm = if ($clang) { Split-Path $clang.Source } else { "${env:ProgramFiles}\LLVM\bin" }
 if (-not (Test-Path (Join-Path $llvm "clang-cl.exe"))) { throw "clang-cl not found - winget install LLVM.LLVM" }
 $paths = @($llvm, (Join-Path $env:USERPROFILE ".cargo\bin"), (Join-Path $env:LOCALAPPDATA "bin\NASM"))
+# libvpx's build runs Perl; Git for Windows ships one.
+if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if ($git) { $paths += Join-Path (Split-Path (Split-Path $git.Source)) "usr\bin" }
+}
 
 if (-not (Test-Path (Join-Path $root "third_party\reaktor\external\SDL\CMakeLists.txt"))) {
     throw "submodules missing - run: git submodule update --init --recursive"

@@ -37,7 +37,7 @@ md5_block(md5_ctx *m, const uint8_t *p)
     };
     uint32_t w[16], a = m->state[0], b = m->state[1], c = m->state[2], d = m->state[3];
 
-    for (int i = 0; i < 16; i++)
+    for (size_t i = 0; i < 16; i++)
         w[i] = (uint32_t)p[i * 4] | (uint32_t)p[i * 4 + 1] << 8 | (uint32_t)p[i * 4 + 2] << 16
              | (uint32_t)p[i * 4 + 3] << 24;
     for (int i = 0; i < 64; i++) {
@@ -113,7 +113,7 @@ md5_final(md5_ctx *m, char hex[33])
     for (int i = 0; i < 8; i++)
         pad[padlen + (size_t)i] = (uint8_t)(bits >> (8 * i));
     md5_update(m, pad, padlen + 8);
-    for (int i = 0; i < 16; i++)
+    for (size_t i = 0; i < 16; i++)
         snprintf(hex + i * 2, 3, "%02x", (unsigned)(m->state[i / 4] >> (8 * (i % 4))) & 0xffu);
 }
 

@@ -14,6 +14,14 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(_tp "${PROJECT_SOURCE_DIR}/third_party")
 
+# Writes a generated file only when its content changes, always with Unix line
+# endings: libvpx's rtcd.pl reads "yes<CR>" from a CRLF config as not "yes".
+# Called as papaya_generate(OUTPUT path CONTENT text); the arguments are read
+# by position so semicolons and quotes in text survive.
+function(papaya_generate)
+    file(CONFIGURE OUTPUT "${ARGV1}" CONTENT "${ARGV3}" NEWLINE_STYLE UNIX)
+endfunction()
+
 # libogg
 papaya_off(INSTALL_DOCS INSTALL_PKG_CONFIG_MODULE INSTALL_CMAKE_PACKAGE_MODULE)
 add_subdirectory("${_tp}/ogg" EXCLUDE_FROM_ALL)
@@ -79,3 +87,6 @@ if(UNIX)
     find_package(Threads REQUIRED)
 endif()
 include(dav1d)
+
+# libvpx (VP8 / VP9): our own CMake, since libvpx uses its own configure.
+include(libvpx)
