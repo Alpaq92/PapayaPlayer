@@ -8,7 +8,7 @@ $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.e
 $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $files = @(git -C $root ls-files 'papaya/*.c' 'app/*.c' 'tests/*.c' 'tools/*.c') +
          @(git -C $root ls-files --others --exclude-standard 'papaya/*.c' 'tests/*.c' 'tools/*.c') |
-         Where-Object { $_ -notmatch '_win32\.c$' } | Sort-Object -Unique
+         Where-Object { $_ -notmatch '(_win32|_generic_arch)\.c$' } | Sort-Object -Unique
 $bat = Join-Path $env:TEMP "papaya_tidy_$PID.bat"
 @(
   '@echo off',

@@ -21,6 +21,8 @@ add_library(papaya_core
     decode/sw/opus/opus.c
     decode/sw/vorbis/vorbis.c
     decode/sw/vpx/vpx.c
+    decode/sw/ittiam/avc.c
+    decode/sw/ittiam/hevc.c
     $<TARGET_OBJECTS:mkvparser>)
 generate_export_header(papaya_core
     BASE_NAME papaya
@@ -30,6 +32,12 @@ target_include_directories(papaya_core PUBLIC
     "${CMAKE_CURRENT_BINARY_DIR}/include")
 target_include_directories(papaya_core PRIVATE demux decode "${PROJECT_SOURCE_DIR}/third_party/libwebm")
 target_link_libraries(papaya_core PRIVATE opus vorbis FLAC Ogg::ogg papaya_miniaudio dav1d vpx)
+# The Ittiam headers clash with each other, so each backend sees only its own.
+set_source_files_properties(decode/sw/ittiam/avc.c PROPERTIES INCLUDE_DIRECTORIES
+    "${PROJECT_SOURCE_DIR}/third_party/libavc/common;${PROJECT_SOURCE_DIR}/third_party/libavc/decoder")
+set_source_files_properties(decode/sw/ittiam/hevc.c PROPERTIES INCLUDE_DIRECTORIES
+    "${PROJECT_SOURCE_DIR}/third_party/libhevc/common;${PROJECT_SOURCE_DIR}/third_party/libhevc/decoder")
+target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_avcdec> $<LINK_ONLY:papaya_hevcdec>)
 if(NOT PAPAYA_SHARED_LIBS)
     target_compile_definitions(papaya_core PUBLIC PAPAYA_STATIC_DEFINE)
 endif()

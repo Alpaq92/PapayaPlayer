@@ -90,3 +90,6 @@ include(dav1d)
 
 # libvpx (VP8 / VP9): our own CMake, since libvpx uses its own configure.
 include(libvpx)
+
+# libavc (H.264) and libhevc (HEVC): our own targets over their source lists.
+include(ittiam)

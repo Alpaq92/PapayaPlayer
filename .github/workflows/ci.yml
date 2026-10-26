@@ -38,7 +38,7 @@ jobs:
       - name: clang-tidy
         run: |
           ./build.sh -o build
-          git ls-files 'papaya/*.c' 'app/*.c' 'tests/*.c' ':!*_win32.c' | xargs clang-tidy -p build
+          git ls-files 'papaya/*.c' 'app/*.c' 'tests/*.c' ':!*_win32.c' ':!*_generic_arch.c' | xargs clang-tidy -p build
 
   # Builds are sped up the way Reaktor's CI does it: ccache with a cache that
   # each successful run refreshes, precompiled headers off (ccache cannot cache

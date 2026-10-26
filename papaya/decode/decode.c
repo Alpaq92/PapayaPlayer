@@ -9,6 +9,8 @@ static const papaya_decode_backend *const backends[] = {
     &papaya_decode_flac,
     &papaya_decode_dav1d,
     &papaya_decode_vpx,
+    &papaya_decode_avc,
+    &papaya_decode_hevc,
 };
 
 #define MAX_PENDING 64
