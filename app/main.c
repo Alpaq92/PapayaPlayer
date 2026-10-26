@@ -1,8 +1,11 @@
-/* PapayaPlayer, phase 1 window: the video scaled to fit, and a control bar
- * with play / pause, a seek slider, the time and Open. The designed UI comes
- * in phase 3.
+/* PapayaPlayer's window: the video scaled to fit, a top bar choosing the
+ * folder and the file in it, and a control bar with play / pause, -10 / +10,
+ * previous / next, a seek slider, the time and Open. Both bars hide while
+ * playing. The designed UI comes in phase 3.
  *
- * Keys: Space play / pause, Left / Right seek 5 s, O open, Escape quit. */
+ * Keys: Space play / pause, Left / Right seek 5 s, J / L seek 10 s,
+ * P / N previous / next file, O open, Escape quit. */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,10 +13,12 @@
 #include "papaya/player.h"
 #include "papaya/thread.h"
 #include "papaya/version.h"
+#include "playlist.h"
 #include "reaktor/main.h"
 #include "reaktor/reaktor.h"
 
 #define BAR_H 48.0f
+#define TOP_H 52.0f
 
 #ifndef PAPAYA_ICON_DIR
 #define PAPAYA_ICON_DIR NULL
@@ -35,6 +40,11 @@ static struct {
 
     unsigned timer;
     float seek_value;        /* slider position, seconds */
+
+    playlist list;           /* the folder of the file playing */
+    char recent[RECENT_MAX][1024];
+    int recent_count;
+    int menu_open;           /* a top-bar dropdown is open: keep the bars */
 } ui;
 
 /* ---- textures ----------------------------------------------------------- */
@@ -227,7 +237,7 @@ set_paused(int paused)
 static void touch(void);
 
 static void
-open_file(const char *path)
+play_path(const char *path)
 {
     papaya_player_config cfg = { .wake = wake_ui, .wake_user = ui.app };
     const char *name = strrchr(path, '/');
@@ -251,6 +261,66 @@ open_file(const char *path)
     set_paused(0);
 }
 
+/* ---- playlist ----------------------------------------------------------- */
+
+/* Handler arguments: seconds to seek, files to step. */
+static int step_back10 = -10, step_fwd10 = 10, step_prev = -1, step_next = 1;
+
+static void
+play_index(int i)
+{
+    char path[2048];
+
+    if (i < 0 || i >= ui.list.count)
+        return;
+    ui.list.current = i;
+    playlist_path(&ui.list, i, path, sizeof path);
+    play_path(path);
+}
+
+static void
+remember_folder(void)
+{
+    recent_add(ui.list.dir);
+    ui.recent_count = recent_folders(ui.recent);
+}
+
+/* A file from anywhere: its folder becomes the playlist. */
+static void
+open_file(const char *path)
+{
+    if (playlist_load_file(&ui.list, path) == 0 && ui.list.current >= 0) {
+        remember_folder();
+        play_index(ui.list.current);
+    } else {
+        playlist_free(&ui.list);
+        ui.list.dir[0] = ui.list.name[0] = 0;
+        play_path(path);
+    }
+}
+
+static void
+open_folder(const char *dir)
+{
+    if (playlist_load(&ui.list, dir, NULL) != 0) {
+        snprintf(ui.error, sizeof ui.error, "Cannot read %s", dir);
+        return;
+    }
+    remember_folder();
+    if (ui.list.count > 0)
+        play_index(0);
+    else {
+        close_file();
+        snprintf(ui.error, sizeof ui.error, "No playable files in %s", ui.list.name);
+    }
+}
+
+static void
+step_file(void *user)
+{
+    play_index(ui.list.current + *(const int *)user);
+}
+
 static void
 toggle_pause(void *user)
 {
@@ -265,8 +335,18 @@ toggle_pause(void *user)
 static void
 seek_by(int64_t delta)
 {
-    if (ui.player)
-        papaya_player_seek(ui.player, papaya_player_position(ui.player) + delta);
+    if (ui.player) {
+        int64_t to = papaya_player_position(ui.player) + delta;
+
+        papaya_player_seek(ui.player, to < 0 ? 0 : to);
+    }
+}
+
+static void
+seek_button(void *user)
+{
+    seek_by((int64_t)*(const int *)user * 1000000);
+    touch();
 }
 
 static void
@@ -279,16 +359,35 @@ chosen(App *app, const char *const *paths, int count, void *user)
 }
 
 static void
+chosen_folder(App *app, const char *const *paths, int count, void *user)
+{
+    (void)app;
+    (void)user;
+    if (count > 0 && paths[0])
+        open_folder(paths[0]);
+}
+
+static void
+ask_for_folder(void *user)
+{
+    (void)user;
+    reaktor_file_dialog_open(ui.app, &(reaktor_file_dialog){
+        .kind = REAKTOR_FOLDER_OPEN, .location = ui.list.dir[0] ? ui.list.dir : NULL,
+        .chosen = chosen_folder });
+}
+
+static void
 ask_for_file(void *user)
 {
     static const reaktor_file_filter filters[] = {
-        { "Media files", "webm;mkv;mka;ivf" },
+        { "Media files", "webm;mkv;mka;ivf;mp4;m4v;m4a;mov" },
         { "All files", "*" },
     };
 
     (void)user;
     reaktor_file_dialog_open(ui.app, &(reaktor_file_dialog){
-        .filters = filters, .filter_count = 2, .chosen = chosen });
+        .filters = filters, .filter_count = 2, .location = ui.list.dir[0] ? ui.list.dir : NULL,
+        .chosen = chosen });
 }
 
 /* ---- page --------------------------------------------------------------- */
@@ -360,6 +459,22 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .icon = playing ? "pause" : "play", .name = "play", .tooltip = playing ? "Pause" : "Play",
             .keys = "Space", .disabled = !ui.player, .flat = 1,
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_pause, NULL } });
+        reaktor_button(&(reaktor_button_spec){
+            .label = "-10", .name = "back10", .tooltip = "Back 10 s", .keys = "J", .disabled = !ui.player,
+            .flat = 1, .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
+            .on_press = { seek_button, &step_back10 } });
+        reaktor_button(&(reaktor_button_spec){
+            .label = "+10", .name = "fwd10", .tooltip = "Forward 10 s", .keys = "L", .disabled = !ui.player,
+            .flat = 1, .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
+            .on_press = { seek_button, &step_fwd10 } });
+        reaktor_button(&(reaktor_button_spec){
+            .icon = "play-skip-back", .name = "prev", .tooltip = "Previous file", .keys = "P",
+            .disabled = ui.list.current <= 0, .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f },
+            .on_press = { step_file, &step_prev } });
+        reaktor_button(&(reaktor_button_spec){
+            .icon = "play-skip-forward", .name = "next", .tooltip = "Next file", .keys = "N",
+            .disabled = ui.list.current < 0 || ui.list.current + 1 >= ui.list.count, .flat = 1,
+            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { step_file, &step_next } });
         reaktor_slider(&(reaktor_slider_spec){
             .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
             .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
@@ -375,6 +490,47 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .icon = "folder-open", .name = "open", .tooltip = "Open (O)", .keys = "O", .flat = 1,
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { ask_for_file, NULL } });
     }
+}
+
+/* The top bar: the folder (open file / folder, recent folders) and the file
+ * within it. */
+static void
+draw_top(struct reaktor_context *ctx, float w)
+{
+    char folder[300], file[300];
+    float file_w = w - 16.0f - 228.0f;
+    int open = 0;
+
+    snprintf(folder, sizeof folder, "%s", ui.list.name[0] ? ui.list.name : "Open");
+    snprintf(file, sizeof file, "%s", ui.list.current >= 0 ? ui.list.files[ui.list.current] : ui.title);
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0, 0, w, TOP_H), 0,
+                      reaktor_rgba(0, 0, 0, 120));
+    REAKTOR_ROW(.w = w - 16.0f, .h = TOP_H, .ml = 8.0f, .gap = 8.0f) {
+        REAKTOR_COMBO(.label = folder, .name = "folder", .body_h = 300.0f,
+                      .box = { .w = 220.0f, .h = 36.0f, .mt = 8.0f }) {
+            open = 1;
+            reaktor_layout_row_dynamic(ctx, 28.0f, 1);
+            if (reaktor_combo_item("Open file...", 0))
+                ask_for_file(NULL);
+            if (reaktor_combo_item("Open folder...", 0))
+                ask_for_folder(NULL);
+            for (int i = 0; i < ui.recent_count; i++)
+                if (reaktor_combo_item(ui.recent[i], strcmp(ui.recent[i], ui.list.dir) == 0))
+                    open_folder(ui.recent[i]);
+        }
+        if (ui.list.count > 0)
+            REAKTOR_COMBO(.label = file, .name = "file", .body_h = 360.0f,
+                          .box = { .w = file_w > 420.0f ? 420.0f : file_w, .h = 36.0f, .mt = 8.0f }) {
+                open = 1;
+                reaktor_layout_row_dynamic(ctx, 28.0f, 1);
+                for (int i = 0; i < ui.list.count; i++)
+                    if (reaktor_combo_item(ui.list.files[i], i == ui.list.current) && i != ui.list.current)
+                        play_index(i);
+            }
+    }
+    ui.menu_open = open;
+    if (open)
+        touch();
 }
 
 static void
@@ -401,8 +557,12 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
         duration = papaya_player_duration(ui.player);
         if (duration == PAPAYA_NOPTS)
             duration = 0;
-        if (papaya_player_ended(ui.player) && !papaya_player_paused(ui.player))
-            set_paused(1);
+        if (papaya_player_ended(ui.player) && !papaya_player_paused(ui.player)) {
+            if (ui.list.current >= 0 && ui.list.current + 1 < ui.list.count)
+                play_index(ui.list.current + 1); /* on to the next file */
+            else
+                set_paused(1);
+        }
         ui.seek_value = (float)papaya_player_position(ui.player) / 1e6f;
     }
     /* While playing, the bar fades out of the way; paused or idle, it stays. */
@@ -416,8 +576,10 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
                 .text = ui.error[0] ? ui.error : "Open a file (O) or drop one on the window",
                 .name = "hint", .align = REAKTOR_TEXT_CENTERED, .color = "#dddddd",
                 .box = { .w = w, .h = 30.0f, .mt = h / 2 - 15.0f } });
-        if (show_bar)
+        if (show_bar || ui.menu_open) {
+            draw_top(ctx, w);
             draw_bar(ctx, w, h, duration);
+        }
     }
 }
 
@@ -439,6 +601,14 @@ player_key(App *app, const SDL_Event *e)
         seek_by(5000000);
         return 1;
     }
+    if (reaktor_chord(e, 0, SDLK_J) || reaktor_chord(e, 0, SDLK_L)) {
+        seek_by(reaktor_chord(e, 0, SDLK_J) ? -10000000 : 10000000);
+        return 1;
+    }
+    if (reaktor_chord(e, 0, SDLK_P) || reaktor_chord(e, 0, SDLK_N)) {
+        step_file(reaktor_chord(e, 0, SDLK_P) ? &step_prev : &step_next);
+        return 1;
+    }
     return 0;
 }
 
@@ -446,6 +616,8 @@ static int
 start(App *app, int argc, char **argv)
 {
     ui.app = app;
+    ui.list.current = -1;
+    ui.recent_count = recent_folders(ui.recent);
     for (int i = 1; i < argc; i++)
         if (argv[i][0] != '-') {
             open_file(argv[i]);
@@ -466,6 +638,7 @@ stop(App *app)
 {
     (void)app;
     close_file();
+    playlist_free(&ui.list);
     free(ui.p010);
 }
 
