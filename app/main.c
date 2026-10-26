@@ -832,9 +832,9 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
 
     REAKTOR_FREE(.w = w, .h = h) {
         draw_video(ctx, w, h);
-        if (!ui.player || ui.error[0])
+        if (ui.error[0])
             reaktor_label(&(reaktor_label_spec){
-                .text = ui.error[0] ? ui.error : "Open a file (O) or drop one on the window",
+                .text = ui.error,
                 .name = "hint", .align = REAKTOR_TEXT_CENTERED, .color = "#dddddd",
                 .box = { .w = w, .h = 30.0f, .mt = h / 2 - 15.0f } });
         ui.bars_shown = show_bar || ui.menu_open || ui.settings_open;
