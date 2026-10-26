@@ -45,3 +45,10 @@ target_include_directories(audio_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party
 target_link_libraries(audio_test PRIVATE papaya_core)
 papaya_warnings(audio_test)
 add_test(NAME audio_test COMMAND audio_test)
+
+add_executable(video_test unit/video_test.c)
+target_include_directories(video_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_compile_definitions(video_test PRIVATE PAPAYA_TESTDATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_link_libraries(video_test PRIVATE papaya_core)
+papaya_warnings(video_test)
+add_test(NAME video_test COMMAND video_test)

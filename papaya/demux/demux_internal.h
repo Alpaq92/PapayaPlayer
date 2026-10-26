@@ -26,6 +26,7 @@ papaya_stream_info *papaya_demux_add_stream(papaya_demuxer *d);
 void papaya_demux_set_duration(papaya_demuxer *d, int64_t duration);
 
 extern const papaya_demux_backend papaya_demux_webm;
+extern const papaya_demux_backend papaya_demux_ivf;
 
 #ifdef __cplusplus
 }
