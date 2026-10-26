@@ -38,7 +38,26 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # As in Reaktor's CI: the compiler cache and the downloaded packages are
+      # kept between runs and synced into and out of the VM.
+      - name: Restore the compiler cache
+        id: ccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.libs }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.libs }}-
+
+      - name: Restore the package cache
+        id: pkgcache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .pkgcache
+          key: pkg-${{ matrix.os }}-${{ matrix.version }}-${{ github.run_id }}
+          restore-keys: pkg-${{ matrix.os }}-${{ matrix.version }}-
+
       - name: Start VM
+        id: vm
         uses: cross-platform-actions/action@e0b9770014ba65d5e0815f15b74031c3a635f641 # v1.6.0
         with:
           operating_system: ${{ matrix.os }}
@@ -53,25 +72,58 @@ jobs:
         run: |
           PATH=/usr/pkg/sbin:/usr/pkg/bin:/usr/local/sbin:/usr/local/bin:$PATH
           export PATH
+          mkdir -p .pkgcache
           case "$(uname -s)" in
             FreeBSD)
-              sudo env IGNORE_OSVERSION=yes pkg install -y cmake-core ninja pkgconf rust dbus \
+              sudo env IGNORE_OSVERSION=yes PKG_CACHEDIR="$PWD/.pkgcache" pkg install -y \
+                cmake-core ninja ccache pkgconf rust dbus \
                 libX11 libXext libXcursor libXi libXfixes libXrandr libXrender libXtst \
                 libxkbcommon wayland wayland-protocols libglvnd </dev/null ;;
             OpenBSD)
-              sudo pkg_add -I cmake-core ninja rust dbus libxkbcommon wayland wayland-protocols </dev/null ;;
+              sudo env PKG_CACHE="$PWD/.pkgcache/" PKG_PATH="$PWD/.pkgcache/:$(cat /etc/installurl)/%c/packages/%a/" \
+                pkg_add -I cmake-core ninja ccache rust dbus libxkbcommon wayland wayland-protocols </dev/null ;;
             NetBSD)
               sudo sed -i.orig 's#^ftp://ftp\.NetBSD\.org#https://cdn.NetBSD.org#' /usr/pkg/etc/pkgin/repositories.conf
+              sudo rm -rf /var/db/pkgin/cache
+              sudo ln -s "$PWD/.pkgcache" /var/db/pkgin/cache
               sudo -E pkgin -y update </dev/null
-              sudo -E pkgin -y install cmake ninja-build pkgconf rust dbus libxkbcommon wayland \
+              sudo -E pkgin -y install cmake ninja-build ccache pkgconf rust dbus libxkbcommon wayland \
                 wayland-protocols clang lld llvm </dev/null ;;
           esac
+          sudo chown -R "$(id -u)" .pkgcache
 
       - name: Build and test
+        id: build
         run: |
           PATH=/usr/pkg/sbin:/usr/pkg/bin:/usr/local/sbin:/usr/local/bin:$PATH
           export PATH
+          CCACHE_DIR=$PWD/.ccache CCACHE_BASEDIR=$PWD CCACHE_MAXSIZE=1G
+          export CCACHE_DIR CCACHE_BASEDIR CCACHE_MAXSIZE
           uname -a
           clang --version
           cargo --version
-          ./build.sh -t -- -DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }} </dev/null
+          ccache -z
+          ./build.sh -t -- -DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }} \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON </dev/null
+          ccache -s
+
+      # Back to the runner, so the caches below can be saved.
+      - name: Keep the caches
+        if: ${{ always() && steps.vm.outcome == 'success' }}
+        shell: cpa.sh {0} --sync-files vm-to-runner
+        run: ':'
+
+      - name: Save the compiler cache
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+
+      - name: Save the package cache
+        if: ${{ always() && steps.vm.outcome == 'success' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .pkgcache
+          key: ${{ steps.pkgcache.outputs.cache-primary-key }}

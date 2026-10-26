@@ -40,10 +40,17 @@ jobs:
           ./build.sh -o build
           git ls-files 'papaya/*.c' 'app/*.c' 'tests/*.c' | xargs clang-tidy -p build
 
+  # Builds are sped up the way Reaktor's CI does it: ccache with a cache that
+  # each successful run refreshes, precompiled headers off (ccache cannot cache
+  # SDL's), and Release objects (no PDBs, which ccache cannot cache on Windows).
   build:
     name: ${{ matrix.os }} ${{ matrix.libs }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 500M
     strategy:
       fail-fast: false
       matrix:
@@ -63,25 +70,68 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf \
+          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf ccache \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
             libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl-dev libdbus-1-dev
       - name: Install packages (macOS)
         if: matrix.os == 'macos'
-        run: brew install ninja
-      - name: Build and test (Windows)
+        run: brew install ninja ccache
+      # ccache's own release, pinned and checked (same version and sums as Reaktor's CI).
+      - name: Install ccache (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
-        run: ./build.ps1 -Test "-DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }}"
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $v = '4.14.1'
+          $sum = '6219f3865ca59aec41ee4b678df171d5d35855ecb2b6dbbbd20690b3a68af7b4'
+          $zip = Join-Path $env:RUNNER_TEMP "ccache.zip"
+          Invoke-WebRequest -Uri "https://github.com/ccache/ccache/releases/download/v$v/ccache-$v-windows-x86_64.zip" `
+            -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
+          if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $sum) { throw "ccache: checksum mismatch" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP "ccache-$v-windows-x86_64")
+      - name: Restore the compiler cache
+        id: ccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.libs }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.os }}-${{ matrix.libs }}-
+      - name: Build and test (Windows)
+        id: build-windows
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          ccache -z
+          ./build.ps1 -Test "-DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }}" `
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache `
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          ccache -s
       - name: Build and test
+        id: build-unix
         if: matrix.os != 'windows'
-        run: ./build.sh -t -- -DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }}
+        run: |
+          ccache -z
+          ./build.sh -t -- -DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }} \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          ccache -s
+      - name: Save the compiler cache
+        if: ${{ always() && (steps.build-windows.outcome == 'success' || steps.build-unix.outcome == 'success') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
 
   sanitizers:
     name: linux ${{ matrix.sanitize }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 500M
     strategy:
       fail-fast: false
       matrix:
@@ -97,6 +147,25 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
             libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
-            libegl-dev libdbus-1-dev
+            libegl-dev libdbus-1-dev ccache
+      - name: Restore the compiler cache
+        id: ccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-sanitize-${{ matrix.sanitize }}-${{ github.run_id }}
+          restore-keys: ccache-sanitize-${{ matrix.sanitize }}-
       - name: Build and test
-        run: ./build.sh -t -- "-DPAPAYA_SANITIZE=${{ matrix.sanitize }}" -DCMAKE_BUILD_TYPE=Debug
+        id: build
+        run: |
+          ccache -z
+          ./build.sh -t -- "-DPAPAYA_SANITIZE=${{ matrix.sanitize }}" -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          ccache -s
+      - name: Save the compiler cache
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
