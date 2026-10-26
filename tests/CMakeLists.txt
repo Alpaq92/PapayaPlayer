@@ -28,12 +28,17 @@ target_link_libraries(demux_test PRIVATE papaya_core)
 papaya_warnings(demux_test)
 add_test(NAME demux_test COMMAND demux_test)
 
+# libxaac's encoder, for the AAC round trip; its headers stay out of ours.
+add_library(aac_encode STATIC unit/aac_encode.c)
+target_link_libraries(aac_encode PUBLIC papaya_xaacenc)
+target_include_directories(aac_encode PRIVATE "${PROJECT_SOURCE_DIR}/third_party/libxaac/encoder"
+    "${PROJECT_SOURCE_DIR}/third_party/libxaac/encoder/drc_src")
 add_executable(decode_test unit/decode_test.c)
 target_include_directories(decode_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
 target_compile_definitions(decode_test PRIVATE
     PAPAYA_LIBWEBM_TESTDATA="${PROJECT_SOURCE_DIR}/third_party/libwebm/testing/testdata")
 # The encoders are only for building test input.
-target_link_libraries(decode_test PRIVATE papaya_core vorbisenc vorbis FLAC)
+target_link_libraries(decode_test PRIVATE papaya_core vorbisenc vorbis FLAC aac_encode)
 if(UNIX)
     target_link_libraries(decode_test PRIVATE m)
 endif()

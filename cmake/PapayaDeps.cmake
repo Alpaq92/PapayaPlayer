@@ -93,3 +93,6 @@ include(libvpx)
 
 # libavc (H.264) and libhevc (HEVC): our own targets over their source lists.
 include(ittiam)
+
+# libxaac (AAC): our own targets over its source lists.
+include(xaac)

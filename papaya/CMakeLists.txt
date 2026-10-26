@@ -23,6 +23,7 @@ add_library(papaya_core
     decode/sw/vpx/vpx.c
     decode/sw/ittiam/avc.c
     decode/sw/ittiam/hevc.c
+    decode/sw/xaac/aac.c
     $<TARGET_OBJECTS:mkvparser>)
 generate_export_header(papaya_core
     BASE_NAME papaya
@@ -38,6 +39,9 @@ set_source_files_properties(decode/sw/ittiam/avc.c PROPERTIES INCLUDE_DIRECTORIE
 set_source_files_properties(decode/sw/ittiam/hevc.c PROPERTIES INCLUDE_DIRECTORIES
     "${PROJECT_SOURCE_DIR}/third_party/libhevc/common;${PROJECT_SOURCE_DIR}/third_party/libhevc/decoder")
 target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_avcdec> $<LINK_ONLY:papaya_hevcdec>)
+set_source_files_properties(decode/sw/xaac/aac.c PROPERTIES INCLUDE_DIRECTORIES
+    "${PROJECT_SOURCE_DIR}/third_party/libxaac/common;${PROJECT_SOURCE_DIR}/third_party/libxaac/decoder")
+target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_xaacdec>)
 if(NOT PAPAYA_SHARED_LIBS)
     target_compile_definitions(papaya_core PUBLIC PAPAYA_STATIC_DEFINE)
 endif()

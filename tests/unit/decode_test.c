@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "FLAC/stream_encoder.h"
+#include "aac_encode.h"
 #include "greatest.h"
 #include "papaya/decode.h"
 #include "papaya/demux.h"
@@ -261,6 +262,74 @@ flac_round_trip(void)
     PASS();
 }
 
+/* ---- AAC: encode with libxaac's encoder, raw access units + ASC ------- */
+
+typedef struct {
+    papaya_packet *aus[256];
+    int n;
+} aac_out;
+
+static void
+aac_au(void *user, const unsigned char *data, int size)
+{
+    aac_out *o = user;
+
+    if (o->n < 256)
+        o->aus[o->n++] = papaya_packet_new(data, (size_t)size);
+}
+
+/* One second of a 440 Hz stereo sine through the given profile; the decoder
+ * is flushed halfway, as a seek would. */
+TEST
+aac_round_trip(int aot)
+{
+    enum { RATE = 48000, CH = 2, N = 48000 };
+    static short pcm[N * CH];
+    unsigned char config[64];
+    int config_size = 0, half;
+    aac_out out = { 0 };
+    papaya_stream_info s = { .kind = PAPAYA_MEDIA_AUDIO, .codec = PAPAYA_CODEC_AAC };
+    papaya_frame_pool *pool = papaya_frame_pool_new();
+    papaya_decoder *d;
+    totals t = { .first_pts = PAPAYA_NOPTS };
+    /* AAC-LC frames are 1024 samples; with SBR the output doubles. */
+    int frame = aot == 2 ? 1024 : 2048;
+
+    for (size_t i = 0; i < N; i++)
+        pcm[2 * i] = pcm[2 * i + 1] = (short)(12000 * sin(2 * PI * 440 * (double)i / RATE));
+    ASSERT(aac_encode(aot, RATE, CH, aot == 2 ? 128000 : aot == 5 ? 64000 : 32000, pcm, N, aac_au,
+                      &out, config, &config_size) > 10);
+    s.extradata = config;
+    s.extradata_size = (size_t)config_size;
+    d = papaya_decoder_open(&s, pool);
+    ASSERT(d != NULL);
+    ASSERT_STR_EQ("libxaac", papaya_decoder_name(d));
+    half = out.n / 2;
+    for (int i = 0; i < out.n; i++) {
+        if (i == half) {
+            drain(d, &t);
+            papaya_decoder_flush(d);
+        }
+        out.aus[i]->pts = (int64_t)i * frame * 1000000 / RATE;
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, out.aus[i]));
+        drain(d, &t);
+        papaya_packet_free(&out.aus[i]);
+    }
+    ASSERT_EQ(CH, t.channels);
+    ASSERT_EQ(RATE, t.rate);
+    /* Every access unit comes back, less what the decoder holds for its
+     * delay around the restart. */
+    ASSERT(t.samples > (long)(out.n - 2) * frame && t.samples <= (long)out.n * frame);
+    /* 440 Hz is 880 sign changes a second, over the encoder's padding; the
+     * restart adds a few at the edges. */
+    ASSERT(t.crossings > 800 && t.crossings < 1000);
+    ASSERT(t.energy / (double)t.samples > 0.05); /* not silence: 0.37^2 / 2 per channel */
+    ASSERT_EQ(0, (int)t.first_pts);
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    PASS();
+}
+
 TEST
 unknown_codec_has_no_decoder(void)
 {
@@ -279,6 +348,9 @@ SUITE(decode)
     RUN_TEST(opus_from_webm);
     RUN_TEST(vorbis_round_trip);
     RUN_TEST(flac_round_trip);
+    RUN_TEST1(aac_round_trip, 2);  /* AAC-LC */
+    RUN_TEST1(aac_round_trip, 5);  /* HE-AAC */
+    RUN_TEST1(aac_round_trip, 29); /* HE-AAC v2 */
     RUN_TEST(unknown_codec_has_no_decoder);
 }
 
