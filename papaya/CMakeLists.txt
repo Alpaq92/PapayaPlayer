@@ -13,6 +13,7 @@ add_library(papaya_core
     player/player.c
     demux/demux.c
     demux/ivf/ivf.c
+    demux/mp4/mp4.c
     demux/webm/webm.cc
     decode/decode.c
     decode/sw/dav1d/dav1d.c

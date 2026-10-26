@@ -60,3 +60,10 @@ target_compile_definitions(player_test PRIVATE
 target_link_libraries(player_test PRIVATE papaya_core)
 papaya_warnings(player_test)
 add_test(NAME player_test COMMAND player_test)
+
+add_executable(mp4_test unit/mp4_test.c)
+target_include_directories(mp4_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_compile_definitions(mp4_test PRIVATE PAPAYA_TESTDATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_link_libraries(mp4_test PRIVATE papaya_core)
+papaya_warnings(mp4_test)
+add_test(NAME mp4_test COMMAND mp4_test)
