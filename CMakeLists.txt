@@ -44,6 +44,12 @@ elseif(UNIX)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+# Everything that links against a sanitized library needs the sanitizer runtime,
+# so the link flag goes on every link step; compile flags stay on our targets.
+if(PAPAYA_SANITIZE)
+    list(JOIN PAPAYA_SANITIZE "," _papaya_san)
+    add_link_options(-fsanitize=${_papaya_san})
+endif()
 include(PapayaWarnings)
 include(GenerateExportHeader)
 

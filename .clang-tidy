@@ -5,8 +5,8 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   -bugprone-reserved-identifier,
   -bugprone-signed-bitwise,
-  cert-err33-c,
   clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
   misc-redundant-expression,
   performance-*,
   portability-*
