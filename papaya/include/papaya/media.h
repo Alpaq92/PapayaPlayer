@@ -48,7 +48,7 @@ typedef struct papaya_packet {
     uint32_t flags;
 } papaya_packet;
 
-/* A packet holding a copy of data. */
+/* A packet holding a copy of data, or size uninitialised bytes if data is NULL. */
 PAPAYA_EXPORT papaya_packet *papaya_packet_new(const uint8_t *data, size_t size);
 PAPAYA_EXPORT void papaya_packet_free(papaya_packet **p);
 

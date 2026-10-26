@@ -105,7 +105,7 @@ papaya_packet_new(const uint8_t *data, size_t size)
         free(p);
         return NULL;
     }
-    if (size)
+    if (data && size)
         memcpy(papaya_buffer_data(p->buf), data, size);
     p->data = papaya_buffer_data(p->buf);
     p->size = size;

@@ -63,3 +63,13 @@ add_subdirectory("${_tp}/libwebm" EXCLUDE_FROM_ALL)
 add_library(papaya_miniaudio OBJECT "${_tp}/miniaudio/miniaudio.c")
 target_include_directories(papaya_miniaudio PUBLIC "${_tp}/miniaudio")
 target_compile_definitions(papaya_miniaudio PUBLIC MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION)
+# Link it as a target (not $<TARGET_OBJECTS>) so these come along: the BSDs
+# keep pthreads and libm out of libc.
+if(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(papaya_miniaudio PUBLIC Threads::Threads m ${CMAKE_DL_LIBS})
+endif()
+if(APPLE)
+    target_link_libraries(papaya_miniaudio PUBLIC "-framework CoreFoundation" "-framework CoreAudio"
+                                                  "-framework AudioToolbox")
+endif()

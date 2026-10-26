@@ -4,3 +4,7 @@ target_link_libraries(papayaplayer PRIVATE papaya_core)
 # warnings go on our own files only.
 papaya_warning_flags(_papaya_flags)
 set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS "${_papaya_flags}")
+
+add_executable(papaya-probe "${PROJECT_SOURCE_DIR}/tools/probe/probe.c")
+target_link_libraries(papaya-probe PRIVATE papaya_core)
+papaya_warnings(papaya-probe)
