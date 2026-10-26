@@ -21,9 +21,10 @@ if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES 
         "${CMAKE_C_COMPILER_ID}. Use build.ps1 / build.sh or set CC/CXX.")
 endif()
 
+# Extensions stay on (gnu11): a strict -std=c11 reaches Reaktor too, and glibc
+# then hides the POSIX calls it uses, such as sigaction.
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
