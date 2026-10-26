@@ -2,10 +2,11 @@
 # src/meson.build at the pinned tag (TECH-STACK.md wrapper-first policy: dav1d
 # uses Meson, so its files stay untouched and the build lives here).
 #
-# x86-64 uses dav1d's NASM assembly when NASM is found. Other architectures
-# build the C code only for now (correct, slower); dav1d's ARM assembly is a
-# follow-up.
+# x86-64 uses dav1d's NASM assembly when NASM is found; ARM64 (not Windows,
+# whose assembler needs gas-preprocessor) its GNU-syntax .S files through
+# clang. Other architectures build the C code only.
 
+include(CheckCSourceCompiles)
 include(CheckIncludeFile)
 include(CheckSymbolExists)
 
@@ -25,6 +26,34 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
     else()
         message(WARNING "NASM not found: dav1d is built without its x86 assembly (much slower)")
     endif()
+endif()
+
+set(_dav1d_arm_asm OFF)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$" AND NOT WIN32)
+    enable_language(ASM)
+    set(_dav1d_arm_asm ON)
+    set(_dav1d_asm ON)
+    # The assembler checks of dav1d's meson.build.
+    check_c_source_compiles("__asm__(\".func t\\n.endfunc\");int main(void){return 0;}" DAV1D_AS_FUNC)
+    check_c_source_compiles("__asm__(\".arch armv8-a\");int main(void){return 0;}" DAV1D_AS_ARCH)
+    set(_dav1d_arch_level "")
+    if(DAV1D_AS_ARCH)
+        set(_dav1d_arch_level armv8-a)
+        foreach(_lvl armv8.2-a armv8.4-a armv8.6-a)
+            string(MAKE_C_IDENTIFIER "DAV1D_AS_${_lvl}" _var)
+            check_c_source_compiles("__asm__(\".arch ${_lvl}\\n\");int main(void){return 0;}" ${_var})
+            if(${_var})
+                set(_dav1d_arch_level ${_lvl})
+            endif()
+        endforeach()
+        string(MAKE_C_IDENTIFIER "DAV1D_AS_${_dav1d_arch_level}_crc" _var)
+        check_c_source_compiles("__asm__(\".arch ${_dav1d_arch_level}+crc\\n\");int main(void){return 0;}" ${_var})
+        if(${_var})
+            string(APPEND _dav1d_arch_level "+crc")
+        endif()
+    endif()
+    set(_dav1d_exts "dotprod:udot v0.4s, v0.16b, v0.16b" "i8mm:usdot v0.4s, v0.16b, v0.16b"
+                    "sve:whilelt p0.s, x0, x1" "sve2:sqrdmulh z0.s, z0.s, z0.s")
 endif()
 
 # ---- config.h, vcs_version.h, config.asm ----------------------------------
@@ -64,6 +93,35 @@ foreach(_a ARCH_ARM ARCH_PPC64LE ARCH_RISCV ARCH_RV32 ARCH_RV64 ARCH_LOONGARCH
 endforeach()
 if(APPLE)
     _dav1d_flag(PREFIX ON)
+endif()
+if(_dav1d_arm_asm)
+    _dav1d_flag(HAVE_AS_FUNC DAV1D_AS_FUNC)
+    _dav1d_flag(HAVE_AS_ARCH_DIRECTIVE DAV1D_AS_ARCH)
+    if(_dav1d_arch_level)
+        string(APPEND _dav1d_config "#define AS_ARCH_LEVEL ${_dav1d_arch_level}
+")
+    endif()
+    string(APPEND _dav1d_config "#define PIC 3
+")
+    foreach(_e ${_dav1d_exts})
+        string(REGEX MATCH "^[^:]+" _name "${_e}")
+        string(REGEX REPLACE "^[^:]+:" "" _instr "${_e}")
+        string(TOUPPER "${_name}" _up)
+        set(_arch "")
+        if(_dav1d_arch_level)
+            set(_arch "\".arch ${_dav1d_arch_level}\\n\"")
+        endif()
+        check_c_source_compiles("__asm__(${_arch}\".arch_extension ${_name}\\n\");int main(void){return 0;}"
+                                DAV1D_ARCHEXT_${_up})
+        if(DAV1D_ARCHEXT_${_up})
+            check_c_source_compiles("__asm__(${_arch}\".arch_extension ${_name}\\n\"\"${_instr}\\n\");int main(void){return 0;}"
+                                    DAV1D_INSTR_${_up})
+        else()
+            check_c_source_compiles("__asm__(${_arch}\"${_instr}\\n\");int main(void){return 0;}" DAV1D_INSTR_${_up})
+        endif()
+        _dav1d_flag(HAVE_AS_ARCHEXT_${_up}_DIRECTIVE DAV1D_ARCHEXT_${_up})
+        _dav1d_flag(HAVE_${_up} DAV1D_INSTR_${_up})
+    endforeach()
 endif()
 
 if(WIN32)
@@ -174,7 +232,15 @@ foreach(_bpc 8 16)
 endforeach()
 
 set(_dav1d_asm_sources "")
-if(_dav1d_asm)
+if(_dav1d_arm_asm)
+    foreach(_f itx looprestoration_common msac refmvs cdef filmgrain ipred loopfilter looprestoration
+               mc mc_dotprod cdef16 filmgrain16 ipred16 itx16 loopfilter16 looprestoration16 mc16
+               mc16_sve)
+        list(APPEND _dav1d_asm_sources "${_d}/src/arm/64/${_f}.S")
+    endforeach()
+    set_source_files_properties(${_dav1d_asm_sources} PROPERTIES
+        INCLUDE_DIRECTORIES "${_dgen};${_d};${_d}/src")
+elseif(_dav1d_asm)
     foreach(_f cpuid msac pal refmvs itx_avx512 cdef_avx2 itx_avx2 cdef_sse itx_sse
                cdef_avx512 filmgrain_avx512 ipred_avx512 loopfilter_avx512 looprestoration_avx512
                mc_avx512 filmgrain_avx2 ipred_avx2 loopfilter_avx2 looprestoration_avx2 mc_avx2
