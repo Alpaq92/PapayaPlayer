@@ -534,7 +534,7 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         }
         reaktor_label(&(reaktor_label_spec){
             .text = times, .name = "time", .color = "#f2f2f2", .align = REAKTOR_TEXT_CENTERED,
-            .box = { .w = 120.0f, .h = 36.0f, .mt = 6.0f } });
+            .box = { .h = 36.0f, .mt = 6.0f, .ml = 6.0f } });
         reaktor_button(&(reaktor_button_spec){
             .icon = sound, .name = "mute", .tooltip = ui.muted ? "Unmute (M)" : "Mute (M)", .keys = "M",
             .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_mute, NULL } });
