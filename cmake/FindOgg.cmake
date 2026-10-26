@@ -1,0 +1,15 @@
+# Vorbis and FLAC call find_package(Ogg); answer with the libogg submodule we
+# already build instead of looking for a system copy.
+if(TARGET ogg AND NOT TARGET Ogg::ogg)
+    add_library(Ogg::ogg ALIAS ogg)
+endif()
+if(TARGET Ogg::ogg)
+    set(Ogg_FOUND TRUE)
+    set(OGG_FOUND TRUE)
+    set(OGG_LIBRARIES Ogg::ogg)
+    set(OGG_LIBRARY Ogg::ogg)
+    get_target_property(OGG_INCLUDE_DIRS ogg INTERFACE_INCLUDE_DIRECTORIES)
+    set(OGG_INCLUDE_DIR "${OGG_INCLUDE_DIRS}")
+else()
+    set(Ogg_FOUND FALSE)
+endif()

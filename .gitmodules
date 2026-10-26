@@ -19,3 +19,21 @@
 [submodule "third_party/libmpeg2"]
 	path = third_party/libmpeg2
 	url = https://github.com/ittiam-systems/libmpeg2.git
+[submodule "third_party/libwebm"]
+	path = third_party/libwebm
+	url = https://github.com/webmproject/libwebm.git
+[submodule "third_party/opus"]
+	path = third_party/opus
+	url = https://github.com/xiph/opus.git
+[submodule "third_party/ogg"]
+	path = third_party/ogg
+	url = https://github.com/xiph/ogg.git
+[submodule "third_party/vorbis"]
+	path = third_party/vorbis
+	url = https://github.com/xiph/vorbis.git
+[submodule "third_party/flac"]
+	path = third_party/flac
+	url = https://github.com/xiph/flac.git
+[submodule "third_party/miniaudio"]
+	path = third_party/miniaudio
+	url = https://github.com/mackron/miniaudio.git

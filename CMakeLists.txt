@@ -52,6 +52,7 @@ if(PAPAYA_SANITIZE)
 endif()
 include(PapayaWarnings)
 include(GenerateExportHeader)
+include(PapayaDeps)
 
 # Reaktor builds itself and SDL as static libraries whatever BUILD_SHARED_LIBS says.
 add_subdirectory(third_party/reaktor EXCLUDE_FROM_ALL)

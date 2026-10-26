@@ -16,6 +16,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 THIRD_PARTY = ROOT / "third_party"
 OUT = ROOT / "THIRD-PARTY-NOTICES.generated.md"
 
+# Where the license we use is not the first license file in the directory.
+# FLAC: libFLAC is BSD (COPYING.Xiph); its tools are GPL and are never built.
+LICENSE_FILE = {"flac": "COPYING.Xiph"}
+
 LICENSE_NAMES = re.compile(r"^(LICEN[CS]E|COPYING|COPYRIGHT|NOTICE)(\..*)?$", re.I)
 
 # First match wins, so copyleft is tested before the permissive texts it may quote.
@@ -57,6 +61,8 @@ def main():
     sections = []
     for lib in sorted(p for p in THIRD_PARTY.iterdir() if p.is_dir()):
         files = license_files(lib)
+        if lib.name in LICENSE_FILE:
+            files = [lib / LICENSE_FILE[lib.name]]
         if not files:
             problems.append(f"{lib.name}: no license file")
             continue
