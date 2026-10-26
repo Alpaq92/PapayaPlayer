@@ -1,0 +1,15 @@
+build/
+build-*/
+target/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.so
+*.dylib
+*.a
+.claude/settings.local.json
+THIRD-PARTY-NOTICES.generated.md

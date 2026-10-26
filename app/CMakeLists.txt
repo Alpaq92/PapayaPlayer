@@ -1,0 +1,6 @@
+reaktor_add_app(papayaplayer MODULES a11y locale text settings SOURCES main.c)
+target_link_libraries(papayaplayer PRIVATE papaya_core)
+# reaktor_add_app compiles Reaktor's module sources in this target too, so our
+# warnings go on our own files only.
+papaya_warning_flags(_papaya_flags)
+set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS "${_papaya_flags}")

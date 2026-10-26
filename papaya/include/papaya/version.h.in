@@ -1,0 +1,24 @@
+#ifndef PAPAYA_VERSION_H
+#define PAPAYA_VERSION_H
+
+#include "papaya/export.h"
+
+#define PAPAYA_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define PAPAYA_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define PAPAYA_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define PAPAYA_VERSION_STRING "@PROJECT_VERSION@"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Version of the library actually loaded, which may differ from the header's
+ * when PapayaPlayer is built with shared libraries. */
+PAPAYA_EXPORT const char *papaya_version(void);
+PAPAYA_EXPORT int papaya_version_number(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: licenses and lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Third-party licenses
+        run: python3 -I tools/licenses.py --check
+      - name: Rust licenses (cargo-deny)
+        run: |
+          cargo install --locked cargo-deny
+          cargo deny --manifest-path rust/Cargo.toml check licenses bans sources
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang clang-tidy ninja-build pkgconf \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
+            libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl-dev libdbus-1-dev
+      - name: clang-tidy
+        run: |
+          ./build.sh -o build
+          git ls-files 'papaya/*.c' 'app/*.c' 'tests/*.c' | xargs clang-tidy -p build
+
+  build:
+    name: ${{ matrix.os }} ${{ matrix.libs }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows, runner: windows-2025, libs: shared }
+          - { os: windows, runner: windows-2025, libs: static }
+          - { os: macos, runner: macos-15, libs: shared }
+          - { os: macos, runner: macos-15, libs: static }
+          - { os: linux, runner: ubuntu-24.04, libs: shared }
+          - { os: linux, runner: ubuntu-24.04, libs: static }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install packages (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
+            libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl-dev libdbus-1-dev
+      - name: Install packages (macOS)
+        if: matrix.os == 'macos'
+        run: brew install ninja
+      - name: Build and test (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: ./build.ps1 -Test "-DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }}"
+      - name: Build and test
+        if: matrix.os != 'windows'
+        run: ./build.sh -t -- -DPAPAYA_SHARED_LIBS=${{ matrix.libs == 'shared' && 'ON' || 'OFF' }}
+
+  sanitizers:
+    name: linux ${{ matrix.sanitize }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitize: ['address;undefined', 'thread']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
+            libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl-dev libdbus-1-dev
+      - name: Build and test
+        run: ./build.sh -t -- "-DPAPAYA_SANITIZE=${{ matrix.sanitize }}" -DCMAKE_BUILD_TYPE=Debug

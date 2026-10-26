@@ -1,0 +1,10 @@
+[package]
+name = "papaya_hello"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Phase 0 check that Corrosion builds a crate with a C ABI, shared or static.
+[lib]
+crate-type = ["cdylib", "staticlib"]

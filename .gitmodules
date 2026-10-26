@@ -1,0 +1,21 @@
+[submodule "third_party/reaktor"]
+	path = third_party/reaktor
+	url = https://github.com/Alpaq92/Reaktor.git
+[submodule "third_party/greatest"]
+	path = third_party/greatest
+	url = https://github.com/silentbicycle/greatest.git
+[submodule "third_party/corrosion"]
+	path = third_party/corrosion
+	url = https://github.com/corrosion-rs/corrosion.git
+[submodule "third_party/libxaac"]
+	path = third_party/libxaac
+	url = https://github.com/ittiam-systems/libxaac.git
+[submodule "third_party/libavc"]
+	path = third_party/libavc
+	url = https://github.com/ittiam-systems/libavc.git
+[submodule "third_party/libhevc"]
+	path = third_party/libhevc
+	url = https://github.com/ittiam-systems/libhevc.git
+[submodule "third_party/libmpeg2"]
+	path = third_party/libmpeg2
+	url = https://github.com/ittiam-systems/libmpeg2.git
