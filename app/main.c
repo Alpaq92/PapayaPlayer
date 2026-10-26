@@ -1,10 +1,10 @@
 /* PapayaPlayer's window: the video scaled to fit, a top bar choosing the
  * folder and the file in it, and a control bar with play / pause, -10 / +10,
- * previous / next, a seek slider, the time and Open. Both bars hide while
+ * previous / next, a seek slider, the time and the volume. Both bars hide while
  * playing. The designed UI comes in phase 3.
  *
  * Keys: Space play / pause, Left / Right seek 5 s, J / L seek 10 s,
- * P / N previous / next file, O open, Escape quit. */
+ * P / N previous / next file, M mute, O open, Escape quit. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +45,8 @@ static struct {
     char recent[RECENT_MAX][1024];
     int recent_count;
     int menu_open;           /* a top-bar dropdown is open: keep the bars */
+    float volume;            /* 0..1, kept across files */
+    int muted;
 } ui;
 
 /* ---- textures ----------------------------------------------------------- */
@@ -235,6 +237,7 @@ set_paused(int paused)
 }
 
 static void touch(void);
+static void apply_volume(void);
 
 static void
 play_path(const char *path)
@@ -251,6 +254,7 @@ play_path(const char *path)
         snprintf(ui.error, sizeof ui.error, "Cannot play %s", path);
         return;
     }
+    apply_volume();
     if (bslash && (!name || bslash > name))
         name = bslash;
     snprintf(ui.title, sizeof ui.title, "%s", name ? name + 1 : path);
@@ -437,13 +441,52 @@ draw_video(struct reaktor_context *ctx, float w, float h)
                        reaktor_rgb(255, 255, 255));
 }
 
+/* A click anywhere on the seek track jumps there (Nuklear's slider only
+ * steps toward a click); dragging stays the slider's own. */
+static void
+click_to_seek(struct reaktor_context *ctx, struct reaktor_rect track, int64_t duration)
+{
+    const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
+    float x = ctx->input.mouse.pos.x;
+
+    if (!ui.player || duration <= 0 || track.w <= 0.0f || !left->clicked || !left->down
+        || !reaktor_input_is_mouse_hovering_rect(&ctx->input, track))
+        return;
+    x = (x - track.x) / track.w;
+    x = x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x;
+    ui.seek_value = x * (float)duration / 1e6f;
+    papaya_player_seek(ui.player, (int64_t)((double)x * (double)duration));
+    touch();
+}
+
+static void
+apply_volume(void)
+{
+    if (ui.player)
+        papaya_player_set_volume(ui.player, ui.muted ? 0.0f : ui.volume);
+}
+
+static void
+toggle_mute(void *user)
+{
+    (void)user;
+    ui.muted = !ui.muted;
+    if (!ui.muted && ui.volume <= 0.0f)
+        ui.volume = 1.0f;
+    apply_volume();
+    touch();
+}
+
 /* The control bar, over the bottom of the video. */
 static void
 draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
 {
     char now[32], total[32], times[80];
     int playing = ui.player && !papaya_player_paused(ui.player);
-    float before = ui.seek_value, y = h - BAR_H;
+    float before = ui.seek_value, volume_before = ui.volume, y = h - BAR_H;
+    const char *sound = ui.muted || ui.volume <= 0.0f ? "volume-mute"
+                        : ui.volume < 0.5f            ? "volume-low"
+                                                      : "volume-high";
 
     format_time(now, sizeof now, ui.player ? papaya_player_position(ui.player) : 0);
     if (duration > 0)
@@ -461,11 +504,11 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_pause, NULL } });
         reaktor_button(&(reaktor_button_spec){
             .label = "-10", .name = "back10", .tooltip = "Back 10 s", .keys = "J", .disabled = !ui.player,
-            .flat = 1, .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
+            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
             .on_press = { seek_button, &step_back10 } });
         reaktor_button(&(reaktor_button_spec){
             .label = "+10", .name = "fwd10", .tooltip = "Forward 10 s", .keys = "L", .disabled = !ui.player,
-            .flat = 1, .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
+            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
             .on_press = { seek_button, &step_fwd10 } });
         reaktor_button(&(reaktor_button_spec){
             .icon = "play-skip-back", .name = "prev", .tooltip = "Previous file", .keys = "P",
@@ -475,10 +518,16 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .icon = "play-skip-forward", .name = "next", .tooltip = "Next file", .keys = "N",
             .disabled = ui.list.current < 0 || ui.list.current + 1 >= ui.list.count, .flat = 1,
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { step_file, &step_next } });
-        reaktor_slider(&(reaktor_slider_spec){
-            .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
-            .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
-            .box = { .weight = 1.0f, .h = 36.0f, .mt = 6.0f, .flags = REAKTOR_LAY_FILL_X } });
+        REAKTOR_ROW(.weight = 1.0f, .h = 36.0f, .mt = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+            struct reaktor_rect track;
+
+            if (reaktor_box_rect(&track))
+                click_to_seek(ctx, track, duration);
+            reaktor_slider(&(reaktor_slider_spec){
+                .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
+                .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
+                .box = { .h = 36.0f, .flags = REAKTOR_LAY_FILL_X } });
+        }
         if (ui.player && duration > 0 && ui.seek_value != before) {
             papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
             touch();
@@ -487,8 +536,16 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .text = times, .name = "time", .color = "#f2f2f2", .align = REAKTOR_TEXT_CENTERED,
             .box = { .w = 120.0f, .h = 36.0f, .mt = 6.0f } });
         reaktor_button(&(reaktor_button_spec){
-            .icon = "folder-open", .name = "open", .tooltip = "Open (O)", .keys = "O", .flat = 1,
-            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { ask_for_file, NULL } });
+            .icon = sound, .name = "mute", .tooltip = ui.muted ? "Unmute (M)" : "Mute (M)", .keys = "M",
+            .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_mute, NULL } });
+        reaktor_slider(&(reaktor_slider_spec){
+            .name = "volume", .value = &ui.volume, .lo = 0.0f, .hi = 1.0f, .step = 0.05f,
+            .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f } });
+        if (ui.volume != volume_before) {
+            ui.muted = ui.volume <= 0.0f;
+            apply_volume();
+            touch();
+        }
     }
 }
 
@@ -601,6 +658,14 @@ player_key(App *app, const SDL_Event *e)
         seek_by(5000000);
         return 1;
     }
+    if (reaktor_chord(e, 0, SDLK_O)) {
+        ask_for_file(NULL);
+        return 1;
+    }
+    if (reaktor_chord(e, 0, SDLK_M)) {
+        toggle_mute(NULL);
+        return 1;
+    }
     if (reaktor_chord(e, 0, SDLK_J) || reaktor_chord(e, 0, SDLK_L)) {
         seek_by(reaktor_chord(e, 0, SDLK_J) ? -10000000 : 10000000);
         return 1;
@@ -617,6 +682,7 @@ start(App *app, int argc, char **argv)
 {
     ui.app = app;
     ui.list.current = -1;
+    ui.volume = 1.0f;
     ui.recent_count = recent_folders(ui.recent);
     for (int i = 1; i < argc; i++)
         if (argv[i][0] != '-') {
@@ -641,6 +707,11 @@ stop(App *app)
     playlist_free(&ui.list);
     free(ui.p010);
 }
+
+/* Our additions to Reaktor's stylesheet. */
+static const char papaya_css[] =
+    ".ghost { background-color: rgba(0, 0, 0, 0); color: #f2f2f2; border-radius: 0.5rem; padding: 8px 10px; }\n"
+    ".ghost:hover { background-color: var(--button-hover); }\n";
 
 int
 main(int argc, char **argv)
@@ -672,5 +743,6 @@ main(int argc, char **argv)
         .key         = player_key,
         .stop        = stop,
         .file_opened = file_opened,
+        .css         = { { .name = "papaya.css", .data = papaya_css, .size = sizeof papaya_css - 1 } },
         .icon_dirs   = { PAPAYA_ICON_DIR } });
 }

@@ -11,6 +11,15 @@ static const char *const media_ext[] = {
     "webm", "mkv", "mka", "ivf", "mp4", "m4v", "m4a", "mov", NULL,
 };
 
+static int
+same_ignoring_case(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++)
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+            return 0;
+    return *a == *b;
+}
+
 int
 playlist_is_media(const char *name)
 {
@@ -19,7 +28,7 @@ playlist_is_media(const char *name)
     if (!dot)
         return 0;
     for (int i = 0; media_ext[i]; i++)
-        if (SDL_strcasecmp(dot + 1, media_ext[i]) == 0)
+        if (same_ignoring_case(dot + 1, media_ext[i]))
             return 1;
     return 0;
 }
@@ -78,7 +87,7 @@ playlist_free(playlist *p)
 {
     for (int i = 0; i < p->count; i++)
         free(p->files[i]);
-    free(p->files);
+    free((void *)p->files);
     p->files = NULL;
     p->count = 0;
     p->current = -1;
@@ -103,7 +112,7 @@ add_entry(void *user, const char *dir, const char *name)
         return SDL_ENUM_CONTINUE;
     if (g->p->count == g->cap) {
         int cap = g->cap ? g->cap * 2 : 64;
-        char **grown = realloc(g->p->files, sizeof(char *) * (size_t)cap);
+        char **grown = (char **)realloc((void *)g->p->files, sizeof(char *) * (size_t)cap);
 
         if (!grown)
             return SDL_ENUM_FAILURE;
@@ -135,7 +144,7 @@ playlist_load(playlist *p, const char *dir, const char *select)
     if (!SDL_EnumerateDirectory(p->dir, add_entry, &g))
         return -1;
     if (p->count > 1)
-        qsort(p->files, (size_t)p->count, sizeof(char *), natural_cmp);
+        qsort((void *)p->files, (size_t)p->count, sizeof(char *), natural_cmp);
     for (int i = 0; select && i < p->count; i++)
         if (strcmp(p->files[i], select) == 0)
             p->current = i;
