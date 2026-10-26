@@ -73,3 +73,9 @@ if(APPLE)
     target_link_libraries(papaya_miniaudio PUBLIC "-framework CoreFoundation" "-framework CoreAudio"
                                                   "-framework AudioToolbox")
 endif()
+
+# dav1d (AV1): our own CMake, since dav1d builds with Meson.
+if(UNIX)
+    find_package(Threads REQUIRED)
+endif()
+include(dav1d)

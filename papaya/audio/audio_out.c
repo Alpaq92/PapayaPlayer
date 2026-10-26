@@ -1,6 +1,7 @@
 #include "papaya/audio_out.h"
 
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -159,7 +160,7 @@ papaya_audio_out_open(const papaya_audio_out_config *config)
         && playback_count)
         ma_device_get_name(&ao->device, ma_device_type_playback, ao->name, sizeof ao->name, NULL);
     if (!ao->name[0])
-        strcpy(ao->name, config->null_device ? "null" : "default");
+        snprintf(ao->name, sizeof ao->name, "%s", config->null_device ? "null" : "default");
     if (ma_device_start(&ao->device) != MA_SUCCESS)
         goto fail_device;
     return ao;

@@ -41,7 +41,8 @@ papaya_thread_start(papaya_thread_fn fn, void *arg, const char *name)
     t->arg = arg;
     if (name)
         MultiByteToWideChar(CP_UTF8, 0, name, -1, t->name, (int)(sizeof t->name / sizeof t->name[0]) - 1);
-    t->handle = (HANDLE)_beginthreadex(NULL, 0, thread_main, t, 0, NULL);
+    /* _beginthreadex returns its HANDLE as a uintptr_t. */
+    t->handle = (HANDLE)_beginthreadex(NULL, 0, thread_main, t, 0, NULL); // NOLINT(performance-no-int-to-ptr)
     if (!t->handle) {
         free(t);
         return NULL;

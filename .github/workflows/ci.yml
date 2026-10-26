@@ -31,7 +31,7 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang clang-tidy ninja-build pkgconf \
+          sudo apt-get install -y --no-install-recommends clang clang-tidy ninja-build pkgconf nasm \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
             libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl-dev libdbus-1-dev
@@ -70,13 +70,20 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf ccache \
+          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf ccache nasm \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
             libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl-dev libdbus-1-dev
       - name: Install packages (macOS)
         if: matrix.os == 'macos'
         run: brew install ninja ccache
+      # NASM for dav1d's x86 assembly.
+      - name: Install NASM (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          Add-Content $env:GITHUB_PATH "C:\Program Files\NASM"
       # ccache's own release, pinned and checked (same version and sums as Reaktor's CI).
       - name: Install ccache (Windows)
         if: matrix.os == 'windows'
@@ -144,7 +151,7 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf \
+          sudo apt-get install -y --no-install-recommends clang ninja-build pkgconf nasm \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
             libxrender-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl-dev libdbus-1-dev ccache

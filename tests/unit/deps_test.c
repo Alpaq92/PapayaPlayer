@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "FLAC/format.h"
+#include "dav1d/dav1d.h"
 #include "greatest.h"
 #include "miniaudio.h"
 #include "ogg/ogg.h"
@@ -19,6 +20,7 @@ libraries_link(void)
     ASSERT(vorbis_version_string() != NULL);
     ASSERT(FLAC__VERSION_STRING != NULL);
     ASSERT(ma_version_string() != NULL);
+    ASSERT(strncmp(dav1d_version(), "1.", 2) == 0);
     PASS();
 }
 

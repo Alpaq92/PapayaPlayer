@@ -35,10 +35,11 @@ main(int argc, char **argv)
     printf("container %s", papaya_demux_name(d));
     print_time(", duration", papaya_demux_duration(d));
     printf(" s\n");
+    for (int i = 0; i < 64; i++)
+        first[i] = last[i] = PAPAYA_NOPTS;
     for (int i = 0; i < papaya_demux_stream_count(d); i++) {
         const papaya_stream_info *s = papaya_demux_stream(d, i);
 
-        first[i] = last[i] = PAPAYA_NOPTS;
         printf("  #%d %s %s (%s)", i, s->kind == PAPAYA_MEDIA_VIDEO ? "video" : "audio",
                papaya_codec_name(s->codec), s->codec_tag ? s->codec_tag : "?");
         if (s->kind == PAPAYA_MEDIA_VIDEO)

@@ -76,18 +76,18 @@ jobs:
           case "$(uname -s)" in
             FreeBSD)
               sudo env IGNORE_OSVERSION=yes PKG_CACHEDIR="$PWD/.pkgcache" pkg install -y \
-                cmake-core ninja ccache pkgconf rust dbus \
+                cmake-core ninja ccache pkgconf rust nasm dbus \
                 libX11 libXext libXcursor libXi libXfixes libXrandr libXrender libXtst \
                 libxkbcommon wayland wayland-protocols libglvnd </dev/null ;;
             OpenBSD)
               sudo env PKG_CACHE="$PWD/.pkgcache/" PKG_PATH="$PWD/.pkgcache/:$(cat /etc/installurl)/%c/packages/%a/" \
-                pkg_add -I cmake-core ninja ccache rust dbus libxkbcommon wayland wayland-protocols </dev/null ;;
+                pkg_add -I cmake-core ninja ccache rust nasm dbus libxkbcommon wayland wayland-protocols </dev/null ;;
             NetBSD)
               sudo sed -i.orig 's#^ftp://ftp\.NetBSD\.org#https://cdn.NetBSD.org#' /usr/pkg/etc/pkgin/repositories.conf
               sudo rm -rf /var/db/pkgin/cache
               sudo ln -s "$PWD/.pkgcache" /var/db/pkgin/cache
               sudo -E pkgin -y update </dev/null
-              sudo -E pkgin -y install cmake ninja-build ccache pkgconf rust dbus libxkbcommon wayland \
+              sudo -E pkgin -y install cmake ninja-build ccache pkgconf rust nasm dbus libxkbcommon wayland \
                 wayland-protocols clang lld llvm </dev/null ;;
           esac
           sudo chown -R "$(id -u)" .pkgcache
