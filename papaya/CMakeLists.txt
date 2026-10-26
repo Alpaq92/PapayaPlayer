@@ -10,6 +10,7 @@ add_library(papaya_core
     core/version.c
     audio/audio_out.c
     io/io.c
+    player/player.c
     demux/demux.c
     demux/ivf/ivf.c
     demux/webm/webm.cc

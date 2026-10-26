@@ -52,3 +52,11 @@ target_compile_definitions(video_test PRIVATE PAPAYA_TESTDATA="${CMAKE_CURRENT_S
 target_link_libraries(video_test PRIVATE papaya_core)
 papaya_warnings(video_test)
 add_test(NAME video_test COMMAND video_test)
+
+add_executable(player_test unit/player_test.c)
+target_include_directories(player_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_compile_definitions(player_test PRIVATE
+    PAPAYA_LIBWEBM_TESTDATA="${PROJECT_SOURCE_DIR}/third_party/libwebm/testing/testdata")
+target_link_libraries(player_test PRIVATE papaya_core)
+papaya_warnings(player_test)
+add_test(NAME player_test COMMAND player_test)
