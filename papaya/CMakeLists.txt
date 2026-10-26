@@ -2,6 +2,10 @@ configure_file(include/papaya/version.h.in
                "${CMAKE_CURRENT_BINARY_DIR}/include/papaya/version.h" @ONLY)
 
 add_library(papaya_core
+    core/clock.c
+    core/media.c
+    core/queue.c
+    core/thread.c
     core/version.c)
 generate_export_header(papaya_core
     BASE_NAME papaya
@@ -17,3 +21,7 @@ set_target_properties(papaya_core PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR})
 papaya_warnings(papaya_core)
+if(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(papaya_core PRIVATE Threads::Threads)
+endif()
