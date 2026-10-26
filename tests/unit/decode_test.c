@@ -62,6 +62,7 @@ opus_from_webm(void)
     for (int i = 0; i < papaya_demux_stream_count(dm); i++)
         if (papaya_demux_stream(dm, i)->kind == PAPAYA_MEDIA_AUDIO)
             audio = papaya_demux_stream(dm, i);
+    ASSERT(audio != NULL);
     d = papaya_decoder_open(audio, pool);
     ASSERT(d != NULL);
     ASSERT_STR_EQ("libopus", papaya_decoder_name(d));
@@ -177,7 +178,7 @@ vorbis_round_trip(void)
     }
     ASSERT_EQ(CH, t.channels);
     ASSERT_EQ(RATE, t.rate);
-    ASSERT(labs(t.samples - RATE * SECONDS) < 2048);
+    ASSERT(labs(t.samples - (long)RATE * SECONDS) < 2048);
     /* 440 Hz: about 880 zero crossings a second. */
     ASSERT(t.crossings > 840 && t.crossings < 920);
     papaya_decoder_close(&d);

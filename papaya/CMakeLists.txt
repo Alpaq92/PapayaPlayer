@@ -8,6 +8,7 @@ add_library(papaya_core
     core/queue.c
     core/thread.c
     core/version.c
+    audio/audio_out.c
     io/io.c
     demux/demux.c
     demux/webm/webm.cc
@@ -23,7 +24,7 @@ target_include_directories(papaya_core PUBLIC
     include
     "${CMAKE_CURRENT_BINARY_DIR}/include")
 target_include_directories(papaya_core PRIVATE demux decode "${PROJECT_SOURCE_DIR}/third_party/libwebm")
-target_link_libraries(papaya_core PRIVATE opus vorbis FLAC Ogg::ogg)
+target_link_libraries(papaya_core PRIVATE opus vorbis FLAC Ogg::ogg papaya_miniaudio)
 if(NOT PAPAYA_SHARED_LIBS)
     target_compile_definitions(papaya_core PUBLIC PAPAYA_STATIC_DEFINE)
 endif()
