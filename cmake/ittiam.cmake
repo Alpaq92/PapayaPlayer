@@ -2,7 +2,7 @@
 # (decoder/*.cmake, common/*.cmake) but with our targets and flags:
 #  - per-file -m flags for the SIMD files instead of AVX2 on every file, so
 #    the plain C stays runnable on any x86-64 CPU;
-#  - papaya's Win32 ithread on Windows (spike S2), no libm there;
+#  - one shared ithread layer (papaya's Win32 one on Windows), no libm there;
 #  - plain C selectors on non-x86 CPUs until their ARM asm is wired up.
 set(_itt_root "${PROJECT_SOURCE_DIR}/third_party")
 set(_itt_shim "${PROJECT_SOURCE_DIR}/papaya/decode/sw/ittiam")
@@ -40,12 +40,23 @@ function(_itt_sources root out)
     if(NOT _itt_x86)
         list(FILTER _srcs EXCLUDE REGEX "/x86/")
     endif()
-    if(WIN32)
-        list(FILTER _srcs EXCLUDE REGEX "/common/ithread\\.c$")
-        list(APPEND _srcs "${_itt_shim}/ithread_win32.c")
-    endif()
+    # Every Ittiam library defines the same ithread_* functions; papaya_ithread
+    # provides them once.
+    list(FILTER _srcs EXCLUDE REGEX "/common/ithread\\.c$")
     set(${out} ${_srcs} PARENT_SCOPE)
 endfunction()
+
+# The threading layer, shared: papaya's Win32 version (spike S2), or libavc's
+# pthread one, whose functions cover what libhevc calls too.
+if(WIN32)
+    add_library(papaya_ithread STATIC "${_itt_shim}/ithread_win32.c")
+else()
+    add_library(papaya_ithread STATIC "${_itt_root}/libavc/common/ithread.c")
+    target_link_libraries(papaya_ithread PUBLIC Threads::Threads)
+    target_compile_options(papaya_ithread PRIVATE -w)
+endif()
+target_include_directories(papaya_ithread PRIVATE "${_itt_root}/libavc/common")
+set_target_properties(papaya_ithread PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 function(_itt_library name root)
     cmake_parse_arguments(A "" "" "SOURCES;INCLUDES" ${ARGN})
@@ -74,8 +85,9 @@ function(_itt_library name root)
     else()
         target_compile_options(${name} PRIVATE -w)
     endif()
+    target_link_libraries(${name} PUBLIC papaya_ithread)
     if(UNIX)
-        target_link_libraries(${name} PUBLIC Threads::Threads m)
+        target_link_libraries(${name} PUBLIC m)
     endif()
 endfunction()
 

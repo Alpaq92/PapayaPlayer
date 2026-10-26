@@ -67,3 +67,9 @@ target_compile_definitions(mp4_test PRIVATE PAPAYA_TESTDATA="${CMAKE_CURRENT_SOU
 target_link_libraries(mp4_test PRIVATE papaya_core)
 papaya_warnings(mp4_test)
 add_test(NAME mp4_test COMMAND mp4_test)
+
+if(PAPAYA_SANITIZE MATCHES "thread")
+    get_property(_papaya_tests DIRECTORY PROPERTY TESTS)
+    set_property(TEST ${_papaya_tests} APPEND PROPERTY ENVIRONMENT
+                 "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
+endif()

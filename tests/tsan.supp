@@ -1,0 +1,8 @@
+# ThreadSanitizer suppressions for the Ittiam decoders (libavc, libhevc).
+# Their worker threads hand off rows and CTBs by polling shared progress
+# flags rather than through locks, which TSan cannot see as ordering. The
+# output is checked bit-exact against the conformance streams instead.
+race:ih264d_
+race:ih264_
+race:ihevcd_
+race:ihevc_
