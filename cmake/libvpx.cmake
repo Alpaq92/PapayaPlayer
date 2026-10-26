@@ -44,9 +44,17 @@ _vpx_list(CONFIG_LIST _vpx_config_list)
 set(_vpx_yes CONFIG_VP8 CONFIG_VP9 CONFIG_VP8_DECODER CONFIG_VP9_DECODER CONFIG_DECODERS
     CONFIG_MULTITHREAD CONFIG_VP9_HIGHBITDEPTH CONFIG_OS_SUPPORT CONFIG_PIC CONFIG_STATIC
     HAVE_VPX_PORTS)
-# No VPX_ARCH_* yet: the generic C build must not pull in the x86 / ARM port
-# helpers, some of which are assembly (vpx_ports/float_control_word.asm). The
-# architecture flags come back with the SIMD paths.
+# x86-64 with NASM: libvpx's SSE2...AVX-512 code, chosen at run time by CPU.
+# Elsewhere (ARM for now) the generic C build, without VPX_ARCH_* so the port
+# helpers' assembly is not pulled in.
+set(_vpx_rtcd_arch generic)
+set(_vpx_x86 OFF)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND PAPAYA_NASM)
+    set(_vpx_x86 ON)
+    set(_vpx_rtcd_arch x86_64)
+    list(APPEND _vpx_yes VPX_ARCH_X86_64 HAVE_X86_ASM HAVE_MMX HAVE_SSE HAVE_SSE2 HAVE_SSE3 HAVE_SSSE3
+         HAVE_SSE4_1 HAVE_AVX HAVE_AVX2 HAVE_AVX512 CONFIG_RUNTIME_CPU_DETECT)
+endif()
 if(UNIX)
     list(APPEND _vpx_yes HAVE_PTHREAD_H HAVE_UNISTD_H CONFIG_GCC)
 endif()
@@ -79,6 +87,15 @@ foreach(_pair "VPX_ARCH;_vpx_arch_list" "HAVE;_vpx_have_list" "CONFIG;_vpx_confi
 endforeach()
 string(APPEND _h "#endif\n")
 papaya_generate(OUTPUT "${_vgen}/vpx_config.h" CONTENT "${_h}")
+# vpx_config.asm: the same 0 / 1 values as "NAME equ VALUE" (libs.mk does this
+# with grep and awk).
+string(REGEX MATCHALL "#define [A-Z0-9_]+ [01]" _vpx_defs "${_h}")
+set(_asm "")
+foreach(_d ${_vpx_defs})
+    string(REGEX REPLACE "#define ([A-Z0-9_]+) ([01])" "\\1 equ \\2\n" _line "${_d}")
+    string(APPEND _asm "${_line}")
+endforeach()
+papaya_generate(OUTPUT "${_vgen}/vpx_config.asm" CONTENT "${_asm}")
 papaya_generate(OUTPUT "${_vgen}/rtcd_config.mk" CONTENT "${_mk}")
 papaya_generate(OUTPUT "${_vgen}/vpx_config.c"
      CONTENT "#include \"vpx/vpx_codec.h\"\nconst char *vpx_codec_build_config(void) { return \"PapayaPlayer\"; }\n")
@@ -102,10 +119,11 @@ foreach(_r "vp8_rtcd;vp8/common/rtcd_defs.pl" "vp9_rtcd;vp9/common/vp9_rtcd_defs
            "vpx_dsp_rtcd;vpx_dsp/vpx_dsp_rtcd_defs.pl" "vpx_scale_rtcd;vpx_scale/vpx_scale_rtcd.pl")
     list(GET _r 0 _sym)
     list(GET _r 1 _defs)
-    if(NOT EXISTS "${_vgen}/${_sym}.h" OR "${_v}/${_defs}" IS_NEWER_THAN "${_vgen}/${_sym}.h"
+    if(NOT EXISTS "${_vgen}/${_sym}.h" OR NOT _vpx_rtcd_arch STREQUAL "${PAPAYA_VPX_RTCD_ARCH}"
+       OR "${_v}/${_defs}" IS_NEWER_THAN "${_vgen}/${_sym}.h"
        OR "${_vgen}/rtcd_config.mk" IS_NEWER_THAN "${_vgen}/${_sym}.h")
         execute_process(
-            COMMAND "${PERL_EXECUTABLE}" "${_v}/build/make/rtcd.pl" --arch=generic --sym=${_sym}
+            COMMAND "${PERL_EXECUTABLE}" "${_v}/build/make/rtcd.pl" --arch=${_vpx_rtcd_arch} --sym=${_sym}
                     "--config=${_vgen}/rtcd_config.mk" "${_v}/${_defs}"
             OUTPUT_FILE "${_vgen}/${_sym}.h"
             RESULT_VARIABLE _rc)
@@ -115,6 +133,8 @@ foreach(_r "vp8_rtcd;vp8/common/rtcd_defs.pl" "vp9_rtcd;vp9/common/vp9_rtcd_defs
     endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_v}/${_defs}")
 endforeach()
+
+set(PAPAYA_VPX_RTCD_ARCH "${_vpx_rtcd_arch}" CACHE INTERNAL "")
 
 # ---- source lists from the .mk files ----------------------------------------
 
@@ -183,7 +203,7 @@ function(_vpx_mk_sources mk dir out)
             set(_is_remove "${CMAKE_MATCH_1}")
             _vpx_expand("${CMAKE_MATCH_2}" _when)
             set(_what "${CMAKE_MATCH_3}")
-            if(_when STREQUAL "yes" AND _what MATCHES "^[A-Za-z0-9_./]+\\.c$")
+            if(_when STREQUAL "yes" AND _what MATCHES "^[A-Za-z0-9_./]+\\.(c|asm)$")
                 if(_is_remove)
                     list(APPEND _remove "${dir}/${_what}")
                 else()
@@ -211,6 +231,31 @@ _vpx_mk_sources(vp8/vp8dx.mk "${_v}/vp8" _vpx_sources)
 _vpx_mk_sources(vp9/vp9_common.mk "${_v}/vp9" _vpx_sources)
 _vpx_mk_sources(vp9/vp9dx.mk "${_v}/vp9" _vpx_sources)
 list(REMOVE_DUPLICATES _vpx_sources)
+if(_vpx_x86 AND WIN32)
+    # Listed under CONFIG_MSVS in vpx_ports.mk; clang-cl defines _MSC_VER too.
+    list(APPEND _vpx_sources "${_v}/vpx_ports/float_control_word.asm")
+endif()
+if(_vpx_x86)
+    # The ISA of each intrinsics file, as libvpx's Makefile gives them.
+    foreach(_isa "mmx:-mmmx" "sse2:-msse2" "sse3:-msse3" "ssse3:-mssse3" "sse4:-msse4.1"
+                 "avx:-mavx" "avx2:-mavx2"
+                 "avx512:-mavx512f;-mavx512cd;-mavx512bw;-mavx512dq;-mavx512vl")
+        string(REGEX MATCH "^[^:]+" _sfx "${_isa}")
+        string(REGEX REPLACE "^[^:]+:" "" _flags "${_isa}")
+        foreach(_f ${_vpx_sources})
+            if(_f MATCHES "_${_sfx}\\.c$")
+                set_source_files_properties("${_f}" PROPERTIES COMPILE_OPTIONS "${_flags}")
+            endif()
+        endforeach()
+    endforeach()
+    set(_vpx_asm ${_vpx_sources})
+    list(FILTER _vpx_asm INCLUDE REGEX "\\.asm$")
+    set(_asm_inc "${_vgen}/" "${_v}/")
+    set_source_files_properties(${_vpx_asm} PROPERTIES INCLUDE_DIRECTORIES "${_asm_inc}")
+    if(APPLE)
+        set_source_files_properties(${_vpx_asm} PROPERTIES COMPILE_DEFINITIONS PREFIX)
+    endif()
+endif()
 
 add_library(vpx ${_vpx_sources} "${_vgen}/vpx_config.c")
 target_include_directories(vpx PRIVATE "${_vgen}" "${_v}")
@@ -219,10 +264,10 @@ set_target_properties(vpx PROPERTIES
     C_VISIBILITY_PRESET default
     WINDOWS_EXPORT_ALL_SYMBOLS ON)  # libvpx has no export macros
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-    target_compile_options(vpx PRIVATE /W0)
+    target_compile_options(vpx PRIVATE $<$<COMPILE_LANGUAGE:C>:/W0>)
     target_compile_definitions(vpx PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
-    target_compile_options(vpx PRIVATE -w)
+    target_compile_options(vpx PRIVATE $<$<COMPILE_LANGUAGE:C>:-w>)
 endif()
 if(UNIX)
     target_link_libraries(vpx PRIVATE Threads::Threads m)
