@@ -58,6 +58,8 @@ include(GenerateExportHeader)
 include(PapayaDeps)
 
 # Reaktor builds itself and SDL as static libraries whatever BUILD_SHARED_LIBS says.
+# Video needs a GPU renderer; on Linux and the BSDs that is SDL's OpenGL one.
+set(REAKTOR_SDL_GL ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/reaktor EXCLUDE_FROM_ALL)
 
 if(PAPAYA_RUST)

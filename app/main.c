@@ -1,27 +1,378 @@
+/* PapayaPlayer, phase 1 window: the video scaled to fit, and a control bar
+ * with play / pause, a seek slider, the time and Open. The designed UI comes
+ * in phase 3.
+ *
+ * Keys: Space play / pause, Left / Right seek 5 s, O open, Escape quit. */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "reaktor/reaktor.h"
-#include "reaktor/main.h"
+#include "papaya/player.h"
 #include "papaya/version.h"
+#include "reaktor/main.h"
+#include "reaktor/reaktor.h"
 
-/* Phase 0 placeholder window: proves Reaktor, SDL and papaya_core build and
- * link together. The player UI arrives in phase 3. */
-static void
-page_shell(App *app, struct reaktor_context *ctx, int win_w, int win_h)
+#define BAR_H 48.0f
+
+static struct {
+    App *app;
+    papaya_player *player;
+    char title[256];
+    char error[512];
+
+    SDL_Texture *texture;
+    papaya_pixel_format tex_pix;
+    int tex_w, tex_h;
+    SDL_Colorspace tex_cs;
+    int no_p010;             /* renderer lacks P010: show 10-bit as 8-bit */
+    uint16_t *p010;          /* 10-bit frames repacked for SDL */
+    size_t p010_size;
+
+    unsigned timer;
+    float seek_value;        /* slider position, seconds */
+} ui;
+
+/* ---- textures ----------------------------------------------------------- */
+
+static SDL_Colorspace
+colorspace_of(const papaya_frame *f)
 {
-    static char title[64];
+    SDL_MatrixCoefficients m = f->color.matrix == 9 ? SDL_MATRIX_COEFFICIENTS_BT2020_NCL
+                             : f->color.matrix == 1 ? SDL_MATRIX_COEFFICIENTS_BT709
+                             : f->color.matrix == 2 && f->height > 576 ? SDL_MATRIX_COEFFICIENTS_BT709
+                             : SDL_MATRIX_COEFFICIENTS_BT601;
+    SDL_ColorPrimaries pri = f->color.primaries == 9 ? SDL_COLOR_PRIMARIES_BT2020 : SDL_COLOR_PRIMARIES_BT709;
+    SDL_TransferCharacteristics trc = f->color.transfer == 16 ? SDL_TRANSFER_CHARACTERISTICS_PQ
+                                    : f->color.transfer == 18 ? SDL_TRANSFER_CHARACTERISTICS_HLG
+                                    : SDL_TRANSFER_CHARACTERISTICS_BT709;
 
-    (void)app;
-    (void)ctx;
-    snprintf(title, sizeof title, "PapayaPlayer %s", papaya_version());
-    REAKTOR_FREE(.w = (float)win_w, .h = (float)win_h) {
-        reaktor_label(&(reaktor_label_spec){
-            .text = title,
-            .name = "title",
-            .align = REAKTOR_TEXT_CENTERED,
-            .box  = { .w = (float)win_w, .h = 40.0f, .mt = ((float)win_h - 40.0f) * 0.5f } });
+    return SDL_DEFINE_COLORSPACE(SDL_COLOR_TYPE_YCBCR,
+                                 f->color.full_range ? SDL_COLOR_RANGE_FULL : SDL_COLOR_RANGE_LIMITED,
+                                 pri, trc, m, SDL_CHROMA_LOCATION_LEFT);
+}
+
+static int
+ensure_texture(const papaya_frame *f, SDL_Colorspace cs)
+{
+    SDL_PixelFormat fmt = f->pix == PAPAYA_PIX_I420_10 && !ui.no_p010 ? SDL_PIXELFORMAT_P010
+                                                                      : SDL_PIXELFORMAT_IYUV;
+    SDL_PropertiesID props;
+
+    if (ui.texture && ui.tex_pix == f->pix && ui.tex_w == f->width && ui.tex_h == f->height && ui.tex_cs == cs)
+        return 0;
+    if (ui.texture)
+        SDL_DestroyTexture(ui.texture);
+    props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, fmt);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, cs);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STREAMING);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, f->width);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, f->height);
+    ui.texture = SDL_CreateTextureWithProperties(reaktor_sdl_renderer(ui.app), props);
+    SDL_DestroyProperties(props);
+    if (!ui.texture && fmt == SDL_PIXELFORMAT_P010) {
+        ui.no_p010 = 1; /* e.g. the software renderer */
+        return ensure_texture(f, SDL_COLORSPACE_BT709_LIMITED);
+    }
+    if (!ui.texture) {
+        snprintf(ui.error, sizeof ui.error, "cannot show this video: %s", SDL_GetError());
+        return -1;
+    }
+    ui.tex_pix = f->pix;
+    ui.tex_w = f->width;
+    ui.tex_h = f->height;
+    ui.tex_cs = cs;
+    return 0;
+}
+
+/* 10-bit planar to 8-bit IYUV, when the renderer has no P010. */
+static void
+upload_10bit_as_8bit(const papaya_frame *f)
+{
+    int cw = (f->width + 1) / 2, ch = (f->height + 1) / 2;
+    size_t need = ((size_t)f->width * (size_t)f->height + (size_t)cw * (size_t)ch * 2 + 1) / 2;
+    uint8_t *p8, *u8, *v8;
+
+    if (ui.p010_size < need) {
+        free(ui.p010);
+        ui.p010 = malloc(need * sizeof *ui.p010);
+        ui.p010_size = ui.p010 ? need : 0;
+        if (!ui.p010)
+            return;
+    }
+    p8 = (uint8_t *)ui.p010;
+    u8 = p8 + (size_t)f->width * (size_t)f->height;
+    v8 = u8 + (size_t)cw * (size_t)ch;
+    for (int pl = 0; pl < 3; pl++) {
+        int pw = pl ? cw : f->width, ph = pl ? ch : f->height;
+        uint8_t *dst = pl == 0 ? p8 : pl == 1 ? u8 : v8;
+
+        for (int y = 0; y < ph; y++) {
+            const uint16_t *src = (const uint16_t *)(f->planes[pl] + (size_t)y * (size_t)f->strides[pl]);
+
+            for (int x = 0; x < pw; x++)
+                dst[(size_t)y * (size_t)pw + (size_t)x] = (uint8_t)(src[x] >> 2);
+        }
+    }
+    SDL_UpdateYUVTexture(ui.texture, NULL, p8, f->width, u8, cw, v8, cw);
+}
+
+/* 10-bit planar (low bits) to P010 (interleaved chroma, high bits). */
+static void
+upload_10bit(const papaya_frame *f)
+{
+    int cw = (f->width + 1) / 2, ch = (f->height + 1) / 2;
+    size_t y_size = (size_t)f->width * (size_t)f->height, need = y_size + (size_t)cw * 2 * (size_t)ch;
+
+    if (f->width <= 0 || f->height <= 0)
+        return;
+    uint16_t *uv;
+
+    if (ui.p010_size < need) {
+        free(ui.p010);
+        ui.p010 = malloc(need * sizeof *ui.p010);
+        ui.p010_size = ui.p010 ? need : 0;
+        if (!ui.p010)
+            return;
+    }
+    for (int y = 0; y < f->height; y++) {
+        const uint16_t *src = (const uint16_t *)(f->planes[0] + (size_t)y * (size_t)f->strides[0]);
+        uint16_t *dst = ui.p010 + (size_t)y * (size_t)f->width;
+
+        for (int x = 0; x < f->width; x++)
+            dst[x] = (uint16_t)(src[x] << 6);
+    }
+    uv = ui.p010 + y_size;
+    for (int y = 0; y < ch; y++) {
+        const uint16_t *u = (const uint16_t *)(f->planes[1] + (size_t)y * (size_t)f->strides[1]);
+        const uint16_t *v = (const uint16_t *)(f->planes[2] + (size_t)y * (size_t)f->strides[2]);
+        uint16_t *dst = uv + (size_t)y * (size_t)cw * 2;
+
+        for (size_t x = 0; x < (size_t)cw; x++) {
+            dst[2 * x] = (uint16_t)(u[x] << 6);
+            dst[2 * x + 1] = (uint16_t)(v[x] << 6);
+        }
+    }
+    SDL_UpdateNVTexture(ui.texture, NULL, (const Uint8 *)ui.p010, f->width * 2, (const Uint8 *)uv, cw * 4);
+}
+
+static void
+show_frame(papaya_frame *f)
+{
+    if (f->pix != PAPAYA_PIX_I420 && f->pix != PAPAYA_PIX_I420_10) {
+        snprintf(ui.error, sizeof ui.error, "4:2:2 / 4:4:4 video is not shown yet");
+        return;
+    }
+    if (ensure_texture(f, ui.no_p010 && f->pix == PAPAYA_PIX_I420_10 ? SDL_COLORSPACE_BT709_LIMITED
+                                                                     : colorspace_of(f)) != 0)
+        return;
+    if (f->pix == PAPAYA_PIX_I420_10 && ui.no_p010)
+        upload_10bit_as_8bit(f);
+    else if (f->pix == PAPAYA_PIX_I420)
+        SDL_UpdateYUVTexture(ui.texture, NULL, f->planes[0], f->strides[0], f->planes[1], f->strides[1],
+                             f->planes[2], f->strides[2]);
+    else
+        upload_10bit(f);
+}
+
+/* ---- playback ----------------------------------------------------------- */
+
+static void
+wake_ui(void *user)
+{
+    reaktor_wake(user);
+}
+
+/* While playing, the window redraws often enough to show each frame on time. */
+static void
+tick(App *app, void *user)
+{
+    (void)user;
+    reaktor_wake(app);
+}
+
+static void
+close_file(void)
+{
+    if (ui.timer) {
+        reaktor_timer_stop(ui.timer);
+        ui.timer = 0;
+    }
+    papaya_player_close(&ui.player);
+    if (ui.texture) {
+        SDL_DestroyTexture(ui.texture);
+        ui.texture = NULL;
     }
 }
+
+static void
+set_paused(int paused)
+{
+    if (!ui.player)
+        return;
+    papaya_player_set_paused(ui.player, paused);
+    if (!paused && !ui.timer)
+        ui.timer = reaktor_timer(ui.app, 4, 1, tick, NULL);
+    else if (paused && ui.timer) {
+        reaktor_timer_stop(ui.timer);
+        ui.timer = 0;
+    }
+}
+
+static void
+open_file(const char *path)
+{
+    papaya_player_config cfg = { .wake = wake_ui, .wake_user = ui.app };
+    const char *name = strrchr(path, '/');
+    const char *bslash = strrchr(path, '\\');
+
+    close_file();
+    ui.error[0] = 0;
+    ui.player = papaya_player_open(path, &cfg);
+    if (!ui.player) {
+        snprintf(ui.error, sizeof ui.error, "Cannot play %s", path);
+        return;
+    }
+    if (bslash && (!name || bslash > name))
+        name = bslash;
+    snprintf(ui.title, sizeof ui.title, "%s", name ? name + 1 : path);
+    /* Give the first picture up to a second, so the window opens on it. */
+    for (int i = 0; i < 200 && papaya_player_video_stream(ui.player)
+                    && papaya_player_next_frame_in(ui.player) < 0; i++)
+        SDL_Delay(5);
+    set_paused(0);
+}
+
+static void
+toggle_pause(void *user)
+{
+    (void)user;
+    if (ui.player) {
+        if (papaya_player_ended(ui.player))
+            papaya_player_seek(ui.player, 0);
+        set_paused(!papaya_player_paused(ui.player));
+    }
+}
+
+static void
+seek_by(int64_t delta)
+{
+    if (ui.player)
+        papaya_player_seek(ui.player, papaya_player_position(ui.player) + delta);
+}
+
+static void
+chosen(App *app, const char *const *paths, int count, void *user)
+{
+    (void)app;
+    (void)user;
+    if (count > 0 && paths[0])
+        open_file(paths[0]);
+}
+
+static void
+ask_for_file(void *user)
+{
+    static const reaktor_file_filter filters[] = {
+        { "Media files", "webm;mkv;mka;ivf" },
+        { "All files", "*" },
+    };
+
+    (void)user;
+    reaktor_file_dialog_open(ui.app, &(reaktor_file_dialog){
+        .filters = filters, .filter_count = 2, .chosen = chosen });
+}
+
+/* ---- page --------------------------------------------------------------- */
+
+static void
+format_time(char *out, size_t size, int64_t us)
+{
+    int s = us > 0 ? (int)(us / 1000000) : 0;
+
+    if (s >= 3600)
+        snprintf(out, size, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60);
+    else
+        snprintf(out, size, "%d:%02d", s / 60, s % 60);
+}
+
+static void
+draw_video(struct reaktor_context *ctx, float w, float h)
+{
+    struct reaktor_image im = { 0 };
+    float scale, vw, vh;
+
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0, 0, w, h), 0, reaktor_rgb(0, 0, 0));
+    if (!ui.texture || ui.tex_w <= 0 || ui.tex_h <= 0)
+        return;
+    scale = w / (float)ui.tex_w < h / (float)ui.tex_h ? w / (float)ui.tex_w : h / (float)ui.tex_h;
+    vw = (float)ui.tex_w * scale;
+    vh = (float)ui.tex_h * scale;
+    im.handle.ptr = ui.texture;
+    im.w = (unsigned short)ui.tex_w;
+    im.h = (unsigned short)ui.tex_h;
+    im.region[2] = (unsigned short)ui.tex_w;
+    im.region[3] = (unsigned short)ui.tex_h;
+    reaktor_draw_image(reaktor_window_get_canvas(ctx), reaktor_rect((w - vw) / 2, (h - vh) / 2, vw, vh), &im,
+                       reaktor_rgb(255, 255, 255));
+}
+
+static void
+page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
+{
+    float w = (float)win_w, h = (float)win_h, video_h = h - BAR_H;
+    char now[32], total[32], times[80];
+    papaya_frame *f;
+    int64_t duration = 0;
+
+    (void)app;
+    if (ui.player) {
+        f = papaya_player_video_frame(ui.player);
+        if (f) {
+            show_frame(f);
+            papaya_frame_unref(&f);
+        }
+        duration = papaya_player_duration(ui.player);
+        if (duration == PAPAYA_NOPTS)
+            duration = 0;
+        if (papaya_player_ended(ui.player) && !papaya_player_paused(ui.player))
+            set_paused(1);
+        ui.seek_value = (float)papaya_player_position(ui.player) / 1e6f;
+    }
+    format_time(now, sizeof now, ui.player ? papaya_player_position(ui.player) : 0);
+    format_time(total, sizeof total, duration);
+    snprintf(times, sizeof times, "%s / %s", now, total);
+
+    REAKTOR_FREE(.w = w, .h = h) {
+        if (!ui.player || ui.error[0])
+            reaktor_label(&(reaktor_label_spec){
+                .text = ui.error[0] ? ui.error : "Open a file (O) or drop one on the window",
+                .name = "hint", .align = REAKTOR_TEXT_CENTERED, .color = "#dddddd",
+                .box = { .w = w, .h = 30.0f, .mt = video_h / 2 - 15.0f } });
+        REAKTOR_ROW(.w = w, .h = BAR_H, .mt = video_h, .gap = 8.0f, .ml = 8.0f, .mr = 8.0f) {
+            float before = ui.seek_value;
+
+            reaktor_button(&(reaktor_button_spec){
+                .label = ui.player && !papaya_player_paused(ui.player) ? "Pause" : "Play",
+                .name = "play", .keys = "Space", .disabled = !ui.player, .fit_content = 1,
+                .box = { .h = 32.0f, .mt = 8.0f }, .on_press = { toggle_pause, NULL } });
+            reaktor_slider(&(reaktor_slider_spec){
+                .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
+                .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
+                .box = { .weight = 1.0f, .h = 32.0f, .mt = 8.0f, .flags = REAKTOR_LAY_FILL_X } });
+            if (ui.player && ui.seek_value != before)
+                papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
+            reaktor_label(&(reaktor_label_spec){
+                .text = times, .name = "time", .box = { .w = 120.0f, .h = 32.0f, .mt = 8.0f } });
+            reaktor_button(&(reaktor_button_spec){
+                .label = "Open", .name = "open", .keys = "O", .fit_content = 1,
+                .box = { .h = 32.0f, .mt = 8.0f }, .on_press = { ask_for_file, NULL } });
+        }
+        draw_video(ctx, w, video_h);
+    }
+}
+
+/* ---- keys and lifetime -------------------------------------------------- */
 
 static int
 player_key(App *app, const SDL_Event *e)
@@ -30,16 +381,71 @@ player_key(App *app, const SDL_Event *e)
         reaktor_request_quit(app);
         return 1;
     }
+    if (reaktor_chord(e, 0, SDLK_LEFT)) {
+        seek_by(-5000000);
+        return 1;
+    }
+    if (reaktor_chord(e, 0, SDLK_RIGHT)) {
+        seek_by(5000000);
+        return 1;
+    }
     return 0;
+}
+
+static int
+start(App *app, int argc, char **argv)
+{
+    ui.app = app;
+    for (int i = 1; i < argc; i++)
+        if (argv[i][0] != '-') {
+            open_file(argv[i]);
+            break;
+        }
+    return 0;
+}
+
+static void
+file_opened(App *app, const char *path)
+{
+    (void)app;
+    open_file(path);
+}
+
+static void
+stop(App *app)
+{
+    (void)app;
+    close_file();
+    free(ui.p010);
 }
 
 int
 main(int argc, char **argv)
 {
-    return launchApp(argc, argv, &(reaktor_launch){
-        .name    = "PapayaPlayer",
-        .version = PAPAYA_VERSION_STRING,
-        .window  = { .w = 960, .h = 540 },
-        .page    = page_shell,
-        .key     = player_key });
+    /* Video needs a GPU renderer; Reaktor's default is software. A
+     * --renderer given on the command line still wins. */
+    char **args = (char **)malloc(sizeof(char *) * (size_t)(argc + 3));
+    int n = 0, has_renderer = 0;
+
+    if (!args)
+        return 1;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--renderer") == 0)
+            has_renderer = 1;
+        args[n++] = argv[i];
+    }
+    if (!has_renderer) {
+        args[n++] = "--renderer";
+        args[n++] = "auto";
+    }
+    args[n] = NULL;
+    return launchApp(n, args, &(reaktor_launch){
+        .name        = "PapayaPlayer",
+        .version     = PAPAYA_VERSION_STRING,
+        .window      = { .w = 1280, .h = 720, .min_w = 480, .min_h = 270 },
+        .page        = page,
+        .start       = start,
+        .key         = player_key,
+        .stop        = stop,
+        .file_opened = file_opened });
 }

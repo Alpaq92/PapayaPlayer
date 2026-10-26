@@ -537,6 +537,8 @@ papaya_player_next_frame_in(papaya_player *p)
 
     if (p->video.index < 0 || papaya_queue_peek(p->frames, &item, NULL) != PAPAYA_QUEUE_OK)
         return -1;
+    if (!p->current)
+        return 0; /* the first frame is due at once */
     now = show_time(p, ((frame_item *)item)->serial);
     if (now == PAPAYA_NOPTS || atomic_load(&p->paused))
         return -1;
