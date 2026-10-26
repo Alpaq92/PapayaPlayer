@@ -504,11 +504,11 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_pause, NULL } });
         reaktor_button(&(reaktor_button_spec){
             .label = "-10", .name = "back10", .tooltip = "Back 10 s", .keys = "J", .disabled = !ui.player,
-            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
+            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 8.5f },
             .on_press = { seek_button, &step_back10 } });
         reaktor_button(&(reaktor_button_spec){
             .label = "+10", .name = "fwd10", .tooltip = "Forward 10 s", .keys = "L", .disabled = !ui.player,
-            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 6.0f },
+            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 8.5f },
             .on_press = { seek_button, &step_fwd10 } });
         reaktor_button(&(reaktor_button_spec){
             .icon = "play-skip-back", .name = "prev", .tooltip = "Previous file", .keys = "P",
@@ -540,7 +540,7 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_mute, NULL } });
         reaktor_slider(&(reaktor_slider_spec){
             .name = "volume", .value = &ui.volume, .lo = 0.0f, .hi = 1.0f, .step = 0.05f,
-            .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f } });
+            .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f, .mr = 12.0f } });
         if (ui.volume != volume_before) {
             ui.muted = ui.volume <= 0.0f;
             apply_volume();
