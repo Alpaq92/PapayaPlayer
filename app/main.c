@@ -8,11 +8,16 @@
 #include <string.h>
 
 #include "papaya/player.h"
+#include "papaya/thread.h"
 #include "papaya/version.h"
 #include "reaktor/main.h"
 #include "reaktor/reaktor.h"
 
 #define BAR_H 48.0f
+
+#ifndef PAPAYA_ICON_DIR
+#define PAPAYA_ICON_DIR NULL
+#endif
 
 static struct {
     App *app;
@@ -219,6 +224,8 @@ set_paused(int paused)
     }
 }
 
+static void touch(void);
+
 static void
 open_file(const char *path)
 {
@@ -228,6 +235,7 @@ open_file(const char *path)
 
     close_file();
     ui.error[0] = 0;
+    touch(); /* the bar shows for a moment on every new file */
     ui.player = papaya_player_open(path, &cfg);
     if (!ui.player) {
         snprintf(ui.error, sizeof ui.error, "Cannot play %s", path);
@@ -285,6 +293,19 @@ ask_for_file(void *user)
 
 /* ---- page --------------------------------------------------------------- */
 
+#define HIDE_AFTER_US 2500000
+
+static struct {
+    float mouse_x, mouse_y;
+    int64_t active_at;       /* last mouse move or key, papaya_time_us() */
+} activity;
+
+static void
+touch(void)
+{
+    activity.active_at = papaya_time_us();
+}
+
 static void
 format_time(char *out, size_t size, int64_t us)
 {
@@ -317,15 +338,60 @@ draw_video(struct reaktor_context *ctx, float w, float h)
                        reaktor_rgb(255, 255, 255));
 }
 
+/* The control bar, over the bottom of the video. */
+static void
+draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
+{
+    char now[32], total[32], times[80];
+    int playing = ui.player && !papaya_player_paused(ui.player);
+    float before = ui.seek_value, y = h - BAR_H;
+
+    format_time(now, sizeof now, ui.player ? papaya_player_position(ui.player) : 0);
+    if (duration > 0)
+        format_time(total, sizeof total, duration);
+    else
+        snprintf(total, sizeof total, "--:--");
+    snprintf(times, sizeof times, "%s / %s", now, total);
+
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0, y, w, BAR_H), 0,
+                      reaktor_rgba(0, 0, 0, 170));
+    REAKTOR_ROW(.w = w - 16.0f, .h = BAR_H, .ml = 8.0f, .mt = y, .gap = 6.0f) {
+        reaktor_button(&(reaktor_button_spec){
+            .icon = playing ? "pause" : "play", .name = "play", .tooltip = playing ? "Pause" : "Play",
+            .keys = "Space", .disabled = !ui.player, .flat = 1,
+            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_pause, NULL } });
+        reaktor_slider(&(reaktor_slider_spec){
+            .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
+            .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
+            .box = { .weight = 1.0f, .h = 36.0f, .mt = 6.0f, .flags = REAKTOR_LAY_FILL_X } });
+        if (ui.player && duration > 0 && ui.seek_value != before) {
+            papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
+            touch();
+        }
+        reaktor_label(&(reaktor_label_spec){
+            .text = times, .name = "time", .color = "#f2f2f2", .align = REAKTOR_TEXT_CENTERED,
+            .box = { .w = 120.0f, .h = 36.0f, .mt = 6.0f } });
+        reaktor_button(&(reaktor_button_spec){
+            .icon = "folder-open", .name = "open", .tooltip = "Open (O)", .keys = "O", .flat = 1,
+            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { ask_for_file, NULL } });
+    }
+}
+
 static void
 page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
 {
-    float w = (float)win_w, h = (float)win_h, video_h = h - BAR_H;
-    char now[32], total[32], times[80];
+    float w = (float)win_w, h = (float)win_h, mx, my;
     papaya_frame *f;
     int64_t duration = 0;
+    int show_bar;
 
     (void)app;
+    SDL_GetMouseState(&mx, &my);
+    if (mx != activity.mouse_x || my != activity.mouse_y) {
+        activity.mouse_x = mx;
+        activity.mouse_y = my;
+        touch();
+    }
     if (ui.player) {
         f = papaya_player_video_frame(ui.player);
         if (f) {
@@ -339,36 +405,19 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
             set_paused(1);
         ui.seek_value = (float)papaya_player_position(ui.player) / 1e6f;
     }
-    format_time(now, sizeof now, ui.player ? papaya_player_position(ui.player) : 0);
-    format_time(total, sizeof total, duration);
-    snprintf(times, sizeof times, "%s / %s", now, total);
+    /* While playing, the bar fades out of the way; paused or idle, it stays. */
+    show_bar = !ui.player || papaya_player_paused(ui.player)
+               || papaya_time_us() - activity.active_at < HIDE_AFTER_US;
 
     REAKTOR_FREE(.w = w, .h = h) {
+        draw_video(ctx, w, h);
         if (!ui.player || ui.error[0])
             reaktor_label(&(reaktor_label_spec){
                 .text = ui.error[0] ? ui.error : "Open a file (O) or drop one on the window",
                 .name = "hint", .align = REAKTOR_TEXT_CENTERED, .color = "#dddddd",
-                .box = { .w = w, .h = 30.0f, .mt = video_h / 2 - 15.0f } });
-        REAKTOR_ROW(.w = w, .h = BAR_H, .mt = video_h, .gap = 8.0f, .ml = 8.0f, .mr = 8.0f) {
-            float before = ui.seek_value;
-
-            reaktor_button(&(reaktor_button_spec){
-                .label = ui.player && !papaya_player_paused(ui.player) ? "Pause" : "Play",
-                .name = "play", .keys = "Space", .disabled = !ui.player, .fit_content = 1,
-                .box = { .h = 32.0f, .mt = 8.0f }, .on_press = { toggle_pause, NULL } });
-            reaktor_slider(&(reaktor_slider_spec){
-                .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
-                .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
-                .box = { .weight = 1.0f, .h = 32.0f, .mt = 8.0f, .flags = REAKTOR_LAY_FILL_X } });
-            if (ui.player && ui.seek_value != before)
-                papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
-            reaktor_label(&(reaktor_label_spec){
-                .text = times, .name = "time", .box = { .w = 120.0f, .h = 32.0f, .mt = 8.0f } });
-            reaktor_button(&(reaktor_button_spec){
-                .label = "Open", .name = "open", .keys = "O", .fit_content = 1,
-                .box = { .h = 32.0f, .mt = 8.0f }, .on_press = { ask_for_file, NULL } });
-        }
-        draw_video(ctx, w, video_h);
+                .box = { .w = w, .h = 30.0f, .mt = h / 2 - 15.0f } });
+        if (show_bar)
+            draw_bar(ctx, w, h, duration);
     }
 }
 
@@ -377,6 +426,7 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
 static int
 player_key(App *app, const SDL_Event *e)
 {
+    touch();
     if (reaktor_chord(e, 0, SDLK_ESCAPE)) {
         reaktor_request_quit(app);
         return 1;
@@ -443,9 +493,11 @@ main(int argc, char **argv)
         .name        = "PapayaPlayer",
         .version     = PAPAYA_VERSION_STRING,
         .window      = { .w = 1280, .h = 720, .min_w = 480, .min_h = 270 },
+        .theme       = REAKTOR_THEME_DARK,
         .page        = page,
         .start       = start,
         .key         = player_key,
         .stop        = stop,
-        .file_opened = file_opened });
+        .file_opened = file_opened,
+        .icon_dirs   = { PAPAYA_ICON_DIR } });
 }
