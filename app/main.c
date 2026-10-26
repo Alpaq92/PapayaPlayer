@@ -4,7 +4,11 @@
  * playing. The designed UI comes in phase 3.
  *
  * Keys: Space play / pause, Left / Right seek 5 s, J / L seek 10 s,
- * P / N previous / next file, M mute, O open, Escape quit. */
+ * P / N previous / next file, M mute, F full screen, O open, Escape close
+ * settings, leave full screen or quit.
+ *
+ * Settings (the cog): native or custom title bar, and whether playback moves
+ * on to the next file. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,6 +51,14 @@ static struct {
     int menu_open;           /* a top-bar dropdown is open: keep the bars */
     float volume;            /* 0..1, kept across files */
     int muted;
+
+    /* settings, kept in Reaktor's settings file */
+    int custom_titlebar;     /* borderless window, the top bar is the title bar */
+    reaktor_bool autoplay_next;
+    int settings_open;
+    struct reaktor_rect settings_rect, cog_rect;
+    struct reaktor_rect drag_rect;  /* the top bar's empty middle, for the hit test */
+    int bars_shown;
 } ui;
 
 /* ---- textures ----------------------------------------------------------- */
@@ -459,6 +471,20 @@ click_to_seek(struct reaktor_context *ctx, struct reaktor_rect track, int64_t du
     touch();
 }
 
+static int
+fullscreen(void)
+{
+    return (SDL_GetWindowFlags(reaktor_sdl_window(ui.app)) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+static void
+toggle_fullscreen(void *user)
+{
+    (void)user;
+    SDL_SetWindowFullscreen(reaktor_sdl_window(ui.app), !fullscreen());
+    touch();
+}
+
 static void
 apply_volume(void)
 {
@@ -540,13 +566,167 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_mute, NULL } });
         reaktor_slider(&(reaktor_slider_spec){
             .name = "volume", .value = &ui.volume, .lo = 0.0f, .hi = 1.0f, .step = 0.05f,
-            .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f, .mr = 12.0f } });
+            .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f, .mr = 6.0f } });
+        reaktor_button(&(reaktor_button_spec){
+            .icon = fullscreen() ? "contract" : "expand", .name = "fullscreen",
+            .tooltip = fullscreen() ? "Exit full screen (F)" : "Full screen (F)", .keys = "F", .flat = 1,
+            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_fullscreen, NULL } });
         if (ui.volume != volume_before) {
             ui.muted = ui.volume <= 0.0f;
             apply_volume();
             touch();
         }
     }
+}
+
+/* ---- settings and the window frame ------------------------------------- */
+
+static void
+toggle_settings(void *user)
+{
+    (void)user;
+    ui.settings_open = !ui.settings_open;
+    touch();
+}
+
+static void
+window_minimize(void *user)
+{
+    (void)user;
+    SDL_MinimizeWindow(reaktor_sdl_window(ui.app));
+}
+
+static void
+window_maximize(void *user)
+{
+    SDL_Window *win = reaktor_sdl_window(ui.app);
+
+    (void)user;
+    if (SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED)
+        SDL_RestoreWindow(win);
+    else
+        SDL_MaximizeWindow(win);
+}
+
+static void
+window_close(void *user)
+{
+    (void)user;
+    reaktor_request_quit(ui.app);
+}
+
+static int
+inside(struct reaktor_rect r, float x, float y)
+{
+    return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
+}
+
+/* With the custom title bar: edges resize, and the top strip drags the
+ * window except over the top bar's controls. */
+static SDL_HitTestResult SDLCALL
+hit_test(SDL_Window *win, const SDL_Point *pt, void *data)
+{
+    const int edge = 6;
+    int w = 0, h = 0, left, right, top, bottom;
+    float x = (float)pt->x, y = (float)pt->y;
+
+    (void)data;
+    if (SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED)
+        top = left = right = bottom = 0;
+    else {
+        SDL_GetWindowSize(win, &w, &h);
+        left = pt->x < edge;
+        right = pt->x >= w - edge;
+        top = pt->y < edge;
+        bottom = pt->y >= h - edge;
+    }
+    if (top && left)
+        return SDL_HITTEST_RESIZE_TOPLEFT;
+    if (top && right)
+        return SDL_HITTEST_RESIZE_TOPRIGHT;
+    if (bottom && left)
+        return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    if (bottom && right)
+        return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    if (top)
+        return SDL_HITTEST_RESIZE_TOP;
+    if (bottom)
+        return SDL_HITTEST_RESIZE_BOTTOM;
+    if (left)
+        return SDL_HITTEST_RESIZE_LEFT;
+    if (right)
+        return SDL_HITTEST_RESIZE_RIGHT;
+    if (y < TOP_H && (!ui.bars_shown || inside(ui.drag_rect, x, y)))
+        return SDL_HITTEST_DRAGGABLE;
+    return SDL_HITTEST_NORMAL;
+}
+
+static void
+set_titlebar(int custom)
+{
+    ui.custom_titlebar = custom;
+    reaktor_set_borderless(ui.app, custom);
+    reaktor_setting_set("titlebar", custom ? "custom" : "native");
+    reaktor_settings_save();
+}
+
+static void
+load_settings(void)
+{
+    const char *t = reaktor_setting("titlebar"), *next = reaktor_setting("autoplay_next");
+
+    ui.custom_titlebar = t && strcmp(t, "custom") == 0;
+    ui.autoplay_next = !next || strcmp(next, "0") != 0;
+    if (ui.custom_titlebar)
+        reaktor_set_borderless(ui.app, 1);
+}
+
+#define SETTINGS_W 280.0f
+
+/* The settings popup, under the cog; a click outside closes it. */
+static void
+draw_settings(struct reaktor_context *ctx, float w)
+{
+    const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
+    float x = ctx->input.mouse.pos.x, y = ctx->input.mouse.pos.y;
+    int choice = ui.custom_titlebar;
+    reaktor_bool next = ui.autoplay_next;
+
+    if (left->clicked && left->down && !inside(ui.settings_rect, x, y) && !inside(ui.cog_rect, x, y)) {
+        ui.settings_open = 0;
+        return;
+    }
+    ui.settings_rect = reaktor_rect(w - SETTINGS_W - 8.0f, TOP_H, SETTINGS_W, 148.0f);
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 10.0f, reaktor_rgba(24, 24, 24, 235));
+    REAKTOR_COLUMN(.w = SETTINGS_W - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = TOP_H + 12.0f, .gap = 4.0f) {
+        reaktor_label(&(reaktor_label_spec){
+            .text = "Title bar", .name = "titlebar-heading", .color = "#9a9a9a", .box = { .h = 24.0f } });
+        REAKTOR_ROW(.h = 32.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+            reaktor_bool native = !choice, custom = choice != 0;
+
+            if (reaktor_select(&(reaktor_select_spec){
+                    .label = "Native", .name = "titlebar-native", .on = &native, .centered = 1,
+                    .box = { .weight = 1.0f, .h = 32.0f, .flags = REAKTOR_LAY_FILL_X } }))
+                choice = 0;
+            if (reaktor_select(&(reaktor_select_spec){
+                    .label = "Custom", .name = "titlebar-custom", .on = &custom, .centered = 1,
+                    .box = { .weight = 1.0f, .h = 32.0f, .flags = REAKTOR_LAY_FILL_X } }))
+                choice = 1;
+        }
+        reaktor_label(&(reaktor_label_spec){
+            .text = "Playback", .name = "playback-heading", .color = "#9a9a9a", .box = { .h = 24.0f, .mt = 8.0f } });
+        reaktor_check(&(reaktor_check_spec){
+            .label = "Play the next file at the end", .name = "autoplay-next", .on = &next,
+            .box = { .h = 28.0f } });
+    }
+    if (choice != ui.custom_titlebar)
+        set_titlebar(choice);
+    if (next != ui.autoplay_next) {
+        ui.autoplay_next = next;
+        reaktor_setting_set("autoplay_next", next ? "1" : "0");
+        reaktor_settings_save();
+    }
+    touch();
 }
 
 /* The top bar: the folder (open file / folder, recent folders) and the file
@@ -584,6 +764,30 @@ draw_top(struct reaktor_context *ctx, float w)
                     if (reaktor_combo_item(ui.list.files[i], i == ui.list.current) && i != ui.list.current)
                         play_index(i);
             }
+        REAKTOR_ROW(.weight = 1.0f, .h = TOP_H, .flags = REAKTOR_LAY_FILL_X) {
+            if (!reaktor_box_rect(&ui.drag_rect))
+                ui.drag_rect = reaktor_rect(0, 0, 0, 0);
+        }
+        REAKTOR_ROW(.w = 36.0f, .h = 36.0f, .mt = 8.0f) {
+            reaktor_box_rect(&ui.cog_rect);
+            reaktor_button(&(reaktor_button_spec){
+                .icon = "settings-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
+                .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_settings, NULL } });
+        }
+        if (ui.custom_titlebar) {
+            int maximized = (SDL_GetWindowFlags(reaktor_sdl_window(ui.app)) & SDL_WINDOW_MAXIMIZED) != 0;
+
+            reaktor_button(&(reaktor_button_spec){
+                .icon = "remove", .name = "minimize", .tooltip = "Minimize", .flat = 1,
+                .box = { .w = 36.0f, .h = 36.0f, .mt = 8.0f }, .on_press = { window_minimize, NULL } });
+            reaktor_button(&(reaktor_button_spec){
+                .icon = maximized ? "copy-outline" : "square-outline", .name = "maximize",
+                .tooltip = maximized ? "Restore" : "Maximize", .flat = 1,
+                .box = { .w = 36.0f, .h = 36.0f, .mt = 8.0f }, .on_press = { window_maximize, NULL } });
+            reaktor_button(&(reaktor_button_spec){
+                .icon = "close", .name = "close", .tooltip = "Close", .flat = 1,
+                .box = { .w = 36.0f, .h = 36.0f, .mt = 8.0f }, .on_press = { window_close, NULL } });
+        }
     }
     ui.menu_open = open;
     if (open)
@@ -615,7 +819,7 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
         if (duration == PAPAYA_NOPTS)
             duration = 0;
         if (papaya_player_ended(ui.player) && !papaya_player_paused(ui.player)) {
-            if (ui.list.current >= 0 && ui.list.current + 1 < ui.list.count)
+            if (ui.autoplay_next && ui.list.current >= 0 && ui.list.current + 1 < ui.list.count)
                 play_index(ui.list.current + 1); /* on to the next file */
             else
                 set_paused(1);
@@ -633,10 +837,13 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
                 .text = ui.error[0] ? ui.error : "Open a file (O) or drop one on the window",
                 .name = "hint", .align = REAKTOR_TEXT_CENTERED, .color = "#dddddd",
                 .box = { .w = w, .h = 30.0f, .mt = h / 2 - 15.0f } });
-        if (show_bar || ui.menu_open) {
+        ui.bars_shown = show_bar || ui.menu_open || ui.settings_open;
+        if (ui.bars_shown) {
             draw_top(ctx, w);
             draw_bar(ctx, w, h, duration);
         }
+        if (ui.settings_open)
+            draw_settings(ctx, w);
     }
 }
 
@@ -646,8 +853,17 @@ static int
 player_key(App *app, const SDL_Event *e)
 {
     touch();
+    if (reaktor_chord(e, 0, SDLK_F)) {
+        toggle_fullscreen(NULL);
+        return 1;
+    }
     if (reaktor_chord(e, 0, SDLK_ESCAPE)) {
-        reaktor_request_quit(app);
+        if (ui.settings_open)
+            ui.settings_open = 0;
+        else if (fullscreen())
+            toggle_fullscreen(NULL);
+        else
+            reaktor_request_quit(app);
         return 1;
     }
     if (reaktor_chord(e, 0, SDLK_LEFT)) {
@@ -683,6 +899,7 @@ start(App *app, int argc, char **argv)
     ui.app = app;
     ui.list.current = -1;
     ui.volume = 1.0f;
+    load_settings();
     ui.recent_count = recent_folders(ui.recent);
     for (int i = 1; i < argc; i++)
         if (argv[i][0] != '-') {
@@ -736,7 +953,7 @@ main(int argc, char **argv)
     return launchApp(n, args, &(reaktor_launch){
         .name        = "PapayaPlayer",
         .version     = PAPAYA_VERSION_STRING,
-        .window      = { .w = 1280, .h = 720, .min_w = 480, .min_h = 270 },
+        .window      = { .w = 1280, .h = 720, .min_w = 480, .min_h = 270, .hit_test = hit_test },
         .theme       = REAKTOR_THEME_DARK,
         .page        = page,
         .start       = start,
