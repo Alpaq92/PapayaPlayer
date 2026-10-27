@@ -16,7 +16,7 @@ lacks OS support (e.g. hardware decoding), the feature falls back to software.
 | SDL3, Reaktor | SDL3 BSD support and Reaktor on BSD to be checked (phase 0 spike) |
 | Audio | miniaudio backends: OSS (FreeBSD), sndio (OpenBSD), audio(4) (NetBSD) (unverified) |
 | Hardware decoding | VA-API where available (FreeBSD; OpenBSD / NetBSD weaker, unverified); otherwise software |
-| TLS | **System library**: LibreSSL on OpenBSD, OpenSSL from base on FreeBSD / NetBSD. Linked, not bundled |
+| TLS | **mbedTLS**, bundled, as on every platform (see step 10) |
 | Media keys | MPRIS over D-Bus, as on Linux |
 | Packaging | FreeBSD ports / pkg, OpenBSD ports, NetBSD pkgsrc, plus a release tarball |
 | CI | BSD virtual machines inside GitHub Actions (e.g. cross-platform-actions, unverified) |
@@ -123,8 +123,17 @@ lacks OS support (e.g. hardware decoding), the feature falls back to software.
 |---|---|---|
 | Scope of the first version | **HTTP(S), HLS, DASH and RTSP/RTP** | Minimum for v1. Our I/O layer uses read/seek callbacks so demuxers don't care where data comes from |
 | HTTP | **libcurl** (curl license, MIT-style) | Redirects, proxies, HTTP/2, range requests |
-| TLS | **OS TLS on Windows and macOS, OpenSSL 3 on Linux, system TLS on the BSDs** (see Platforms) | Schannel; Apple's network stack; OpenSSL 3.x is Apache-2.0 (checked). On Linux, link the system OpenSSL 3 rather than bundling it (unverified that every target distro ships 3.x). Also provides AES-128 for encrypted HLS |
+| TLS | **mbedTLS** (Apache-2.0) on all six platforms, bundled, as curl's TLS backend (changed 2026-10-27) | One TLS library and one code path everywhere. Replaces the earlier mix of Schannel, Apple TLS, OpenSSL 3 and system LibreSSL/OpenSSL: curl dropped Apple's Secure Transport in 2025 (no TLS 1.3), so macOS needed a bundled library anyway. Costs: we ship a release for every mbedTLS security fix, and load each OS's certificate store ourselves (Windows store, macOS keychain, the distro / BSD CA bundle), since mbedTLS reads none of them; how curl does this with mbedTLS on each OS is unverified. Also provides AES-128 for encrypted HLS |
 | HLS, DASH, RTSP | **Port** Media3 `exoplayer_hls`, `exoplayer_dash`, `exoplayer_rtsp` (Java, Apache-2.0) | Modules confirmed to exist; contents not yet checked. DASH manifests (XML) through expat. HLS segments use the MPEG-TS and fragmented-MP4 demuxers |
+
+## Chromecast (proposed 2026-10-27, after networking)
+
+| Choice | Decision | Notes |
+|---|---|---|
+| Sender | **Our own C client** of the Cast v2 protocol, maybe | No permissive C library exists: Google's Open Screen is C++ (BSD-3, BoringSSL, GN build), VLC's module is LGPL, the Rust crates are old or unchecked. Roughly 1,500-2,000 lines |
+| Parts | **libcurl + mbedTLS** for the TLS connection to port 8009 (`CURLOPT_CONNECT_ONLY`), **cJSON** (MIT) for messages, the CastMessage protobuf by hand or **nanopb** (zlib), **mdns** (mjansson, public domain) for `_googlecast._tcp` discovery | Device authentication is optional for a sender and skipped |
+| Receiver | Google's **Default Media Receiver** (no registration) | Load, play, pause, seek, volume, status |
+| Media | The player serves the file over a small built-in HTTP server with range requests | The device plays only what it decodes natively (H.264, VP8/VP9, AAC/Opus; HEVC / AV1 / HDR on newer models). No re-encoding without FFmpeg; MKV gets remuxed to fragmented MP4. Subtitles as WebVTT |
 
 ## Step 11: quality (decided 2026-10-26)
 
@@ -191,7 +200,7 @@ shader if Reaktor can't draw it fast enough (unverified).
 | Choice | Decision | Notes |
 |---|---|---|
 | Windows | **NSIS** (zlib license) | `.exe` installer: file associations, uninstaller. Windows code signing not decided yet; unsigned installers get SmartScreen warnings |
-| Linux | **Flatpak (Flathub), AppImage, .deb / .rpm, AUR** | Flatpak takes OpenSSL and VA-API from its runtime; .deb / .rpm / AUR use system libraries. AppImage has to bundle OpenSSL 3 or rely on the system copy (to decide) |
+| Linux | **Flatpak (Flathub), AppImage, .deb / .rpm, AUR** | mbedTLS is bundled everywhere; Flatpak takes VA-API from its runtime; .deb / .rpm / AUR use system libraries otherwise |
 | macOS | **Unsigned for now** | Universal (ARM + Intel) app. Users right-click → Open past Gatekeeper. Signing + notarisation later (Apple Developer account) |
 | BSDs | **FreeBSD ports / pkg, OpenBSD ports, NetBSD pkgsrc, release tarball** | Updates through each system's package manager |
 | Auto-update | **WinSparkle (Windows) + Sparkle (macOS)**, both MIT | One appcast feed with EdDSA-signed updates. Linux updates through Flathub and package managers. How Sparkle behaves with an unsigned app is unverified |
@@ -201,7 +210,8 @@ shader if Reaktor can't draw it fast enough (unverified).
 - **From the phase 0 spikes** (`spikes/RESULTS.md`): Reaktor needs an option for the renderer's output colorspace (HDR10 output) and, for custom shaders, one for SDL's GPU renderer (it forces `SDL_GPU` off); Reaktor's CSS has no gradients (draw them in our widgets or add them to Reaktor); SDL's renderer does YUV→RGB, HDR10 and tone mapping itself, so BT.2390 becomes optional; libavc's own CMake builds everything with AVX2, so our targets set SIMD flags per file.
 
 - UI details: what Reaktor's CSS can draw, and which elements the design takes from each template.
-- Windows code signing; macOS signing + notarisation; AppImage OpenSSL.
+- Windows code signing; macOS signing + notarisation.
+- mbedTLS: loading the OS certificate stores on each platform; its major version (curl's support for mbedTLS 4 unverified).
 - Checks marked (unverified) above: miniaudio non-PCM output, SDL GPU render state, cros-codecs C ABI and provenance, Media3 HLS/DASH/RTSP contents, tomlc17 writing.
 - From CODECS.md: TS demuxer source, Windows builds of the Ittiam libraries, provenance checks, ASF legal check, patents.
 - FFmpeg-free costs (deferred by the user).

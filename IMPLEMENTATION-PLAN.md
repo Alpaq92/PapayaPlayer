@@ -178,12 +178,14 @@ and SDR screens; conformance runs for H.264 / HEVC / AV1 in CI.
 
 | Item | Size |
 |---|---|
-| `net/`: **libcurl** source behind the `io/` callbacks; OS TLS on Windows / macOS, **OpenSSL 3** on Linux, system TLS on the BSDs; range requests, redirects, buffering UI | M |
+| `net/`: **libcurl** source behind the `io/` callbacks, **mbedTLS** as its TLS backend on every platform (bundled), OS certificate stores loaded per platform; range requests, redirects, buffering UI | M |
 | Progressive HTTP files and Icecast / SHOUTcast radio (ICY metadata) | S |
 | **HLS** port from Media3 `exoplayer_hls`: playlists, segments (TS + fMP4), AES-128, bitrate switching | L |
 | **DASH** port from Media3 `exoplayer_dash`, manifests through expat | L |
 | **RTSP/RTP** port from Media3 `exoplayer_rtsp` | L |
 | Check Media3 module contents first (still unverified) | S |
+
+| Optional: **Chromecast sender**, our own C client (TECH-STACK.md, Chromecast): mDNS discovery, Cast v2 over curl + mbedTLS, Default Media Receiver, built-in HTTP server for the file, MKV remuxed to fragmented MP4, Cast button + device picker | M |
 
 **Exit:** public HLS / DASH test streams and an RTSP camera play.
 
@@ -226,7 +228,7 @@ the 0.3 testers.
 | **FreeBSD ports / pkg, OpenBSD ports, NetBSD pkgsrc**, release tarball | M |
 | macOS universal app bundle (unsigned for now) | S |
 | **WinSparkle + Sparkle** with one signed appcast | S |
-| Decide: Windows code signing, macOS signing + notarisation, AppImage OpenSSL | — |
+| Decide: Windows code signing, macOS signing + notarisation | — |
 
 ---
 
