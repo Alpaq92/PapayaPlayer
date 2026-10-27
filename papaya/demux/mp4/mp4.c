@@ -1,11 +1,15 @@
-/* MP4 / MOV (ISO base media file format), non-fragmented files.
+/* MP4 / MOV (ISO base media file format), plain and fragmented.
  *
  * Structured after AndroidX Media3's Mp4Extractor and BoxParser
  * (libraries/extractor/.../mp4/, Apache-2.0, Copyright (C) 2016 The Android
  * Open Source Project): the moov box is read whole, every track's sample table
  * (stts, ctts, stsc, stsz / stz2, stco / co64, stss) is expanded into one
  * array of samples, the first edit-list entry shifts its times, and packets
- * are read across tracks in file order. Fragmented MP4 (moof) is a follow-up.
+ * are read across tracks in file order. A fragmented file's moof boxes
+ * (tfhd, tfdt, trun, with the trex defaults from mvex) are read at open and
+ * appended to the same arrays, so reading and seeking work the same way; as in
+ * Media3's FragmentedMp4Extractor, a traf's data starts at its moof unless
+ * tfhd gives a base offset. Live, unbounded files come with HLS / DASH.
  *
  * Licensed under the Apache License, Version 2.0. */
 #include <stdlib.h>
@@ -15,6 +19,8 @@
 
 #define MAX_TRACKS 16
 #define MAX_MOOV (256u << 20)
+#define MAX_MOOF (64u << 20)
+#define MAX_SAMPLES 50000000u
 #define FOURCC(a, b, c, d) ((uint32_t)(a) << 24 | (uint32_t)(b) << 16 | (uint32_t)(c) << 8 | (uint32_t)(d))
 
 typedef struct {
@@ -26,9 +32,14 @@ typedef struct {
 
 typedef struct {
     int stream;           /* our stream index, -1 if unused */
+    papaya_stream_info *info;
+    uint32_t id;          /* tkhd track_ID, what fragments refer to */
     uint32_t timescale;
     sample *samples;
-    uint32_t count, next;
+    uint32_t count, cap, next;
+    int64_t edit_shift;   /* subtracted from every time */
+    int64_t end_dts;      /* where the next fragment sample starts, before the shift */
+    uint32_t trex_duration, trex_size, trex_flags; /* fragment defaults */
     uint8_t *extradata;
     size_t extradata_size;
     char tag[5];          /* sample entry fourcc */
@@ -39,6 +50,7 @@ typedef struct {
     track tracks[MAX_TRACKS];
     int track_count;
     uint32_t movie_timescale;
+    int fragmented;       /* moov has mvex */
 } mp4;
 
 /* ---- big-endian reading over a buffer -------------------------------------- */
@@ -412,8 +424,10 @@ build_samples(rd stbl, track *t, int64_t edit_shift)
     }
     has_ctts = find_box(stbl, FOURCC('c', 't', 't', 's'), &ctts);
     has_stss = find_box(stbl, FOURCC('s', 't', 's', 's'), &stss);
-    if (count == 0 || count > 50000000 || stsz.bad)
-        return count == 0 ? 0 : -1;
+    if (count > MAX_SAMPLES || stsz.bad)
+        return -1;
+    if (count == 0)
+        return 0; /* a fragmented file's samples are all in its fragments */
     t->samples = calloc(count, sizeof *t->samples);
     if (!t->samples)
         return -1;
@@ -486,6 +500,7 @@ build_samples(rd stbl, track *t, int64_t edit_shift)
         }
         for (; si < count; si++)
             t->samples[si].dts = t->samples[si].pts = dts;
+        t->end_dts = dts;
     }
     if (has_ctts) {
         uint32_t version = u8(&ctts), entries, si = 0;
@@ -527,7 +542,7 @@ build_samples(rd stbl, track *t, int64_t edit_shift)
 static void
 parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
 {
-    rd mdia, mdhd, hdlr, minf, stbl, stsd, edts, elst;
+    rd mdia, mdhd, hdlr, minf, stbl, stsd, edts, elst, tkhd;
     uint32_t handler, timescale, version;
     int64_t edit_shift = 0;
     papaya_stream_info *s;
@@ -583,11 +598,18 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
     memset(t, 0, sizeof *t);
     t->stream = -1;
     t->timescale = timescale;
+    t->edit_shift = edit_shift;
+    if (find_box(trak, FOURCC('t', 'k', 'h', 'd'), &tkhd)) {
+        uint32_t v = u8(&tkhd);
+
+        skip(&tkhd, 3 + (v ? 16 : 8));
+        t->id = u32(&tkhd);
+    }
     s = papaya_demux_add_stream(d);
     if (!s)
         return;
     parse_stsd(stsd, t, s, handler);
-    if (build_samples(stbl, t, edit_shift) != 0 || t->count == 0) {
+    if (build_samples(stbl, t, edit_shift) != 0 || (t->count == 0 && !m->fragmented)) {
         free(t->samples);
         free(t->extradata);
         t->samples = NULL;
@@ -599,11 +621,199 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
     s->extradata_size = t->extradata_size;
     if (strcmp(lang, "und") != 0 && lang[0] >= 'a')
         memcpy(s->language, lang, 4);
-    s->duration = (t->samples[t->count - 1].pts + 1) * 1000000 / timescale;
+    if (t->count)
+        s->duration = (t->samples[t->count - 1].pts + 1) * 1000000 / timescale;
     t->stream = s->index;
+    t->info = s;
     m->track_count++;
 }
 
+/* ---- top-level boxes ---------------------------------------------------------- */
+
+/* The box at pos: its type, whole size and header size. -1 at the end. */
+static int
+top_box(papaya_io *io, int64_t pos, int64_t size, uint32_t *type, uint64_t *box, uint32_t *header)
+{
+    uint8_t h[16];
+
+    if ((size >= 0 && pos + 8 > size) || papaya_io_read_at(io, pos, h, 8) != 0)
+        return -1;
+    *box = (uint64_t)h[0] << 24 | (uint64_t)h[1] << 16 | (uint64_t)h[2] << 8 | h[3];
+    *type = FOURCC(h[4], h[5], h[6], h[7]);
+    *header = 8;
+    if (*box == 1) {
+        if (papaya_io_read_at(io, pos + 8, h + 8, 8) != 0)
+            return -1;
+        *box = 0;
+        for (int i = 8; i < 16; i++)
+            *box = *box << 8 | h[i];
+        *header = 16;
+    } else if (*box == 0 && size >= 0) {
+        *box = (uint64_t)(size - pos);
+    }
+    return *box < *header ? -1 : 0;
+}
+
+/* ---- fragments --------------------------------------------------------------- */
+
+static track *
+track_by_id(mp4 *m, uint32_t id)
+{
+    for (int i = 0; i < m->track_count; i++)
+        if (m->tracks[i].id == id)
+            return &m->tracks[i];
+    return NULL;
+}
+
+/* mvex: each track's trex defaults. */
+static void
+parse_mvex(mp4 *m, rd mvex)
+{
+    uint32_t type;
+    rd b;
+
+    while (next_box(&mvex, &type, &b)) {
+        track *t;
+
+        if (type != FOURCC('t', 'r', 'e', 'x'))
+            continue;
+        skip(&b, 4);
+        t = track_by_id(m, u32(&b));
+        skip(&b, 4); /* sample description index */
+        if (t && !b.bad) {
+            t->trex_duration = u32(&b);
+            t->trex_size = u32(&b);
+            t->trex_flags = u32(&b);
+        }
+    }
+}
+
+static int
+add_sample(track *t, int64_t offset, uint32_t size, int64_t dts, int64_t cts, uint32_t flags)
+{
+    sample *s;
+
+    if (t->count == t->cap) {
+        uint32_t cap = t->cap ? t->cap * 2 : 1024;
+        sample *grown;
+
+        if (cap > MAX_SAMPLES)
+            return -1;
+        grown = realloc(t->samples, sizeof *grown * cap);
+        if (!grown)
+            return -1;
+        t->samples = grown;
+        t->cap = cap;
+    }
+    s = &t->samples[t->count++];
+    s->offset = offset;
+    s->size = size;
+    s->dts = dts - t->edit_shift;
+    s->pts = dts + cts - t->edit_shift;
+    s->key = (flags & 0x10000) == 0; /* sample_is_non_sync_sample */
+    return 0;
+}
+
+/* One traf of the moof at moof_pos. */
+static int
+parse_traf(mp4 *m, rd traf, int64_t moof_pos)
+{
+    uint32_t type, tf, duration, size, flags;
+    int64_t base, data;
+    track *t;
+    rd b;
+
+    if (!find_box(traf, FOURCC('t', 'f', 'h', 'd'), &b))
+        return 0;
+    tf = u32(&b) & 0xffffff;
+    t = track_by_id(m, u32(&b));
+    if (!t || b.bad)
+        return 0; /* a track we do not play */
+    base = (tf & 0x1) ? (int64_t)u64(&b) : moof_pos;
+    if (tf & 0x2)
+        skip(&b, 4);
+    duration = (tf & 0x8) ? u32(&b) : t->trex_duration;
+    size = (tf & 0x10) ? u32(&b) : t->trex_size;
+    flags = (tf & 0x20) ? u32(&b) : t->trex_flags;
+    if (b.bad)
+        return -1;
+    if (find_box(traf, FOURCC('t', 'f', 'd', 't'), &b)) {
+        uint32_t v = u8(&b);
+
+        skip(&b, 3);
+        t->end_dts = v ? (int64_t)u64(&b) : (int64_t)u32(&b);
+    }
+
+    /* Each trun's data follows the previous one's unless it gives an offset. */
+    data = base;
+    while (next_box(&traf, &type, &b)) {
+        uint32_t head, version, rf, count, first = 0;
+
+        if (type != FOURCC('t', 'r', 'u', 'n'))
+            continue;
+        head = u32(&b);
+        version = head >> 24;
+        rf = head & 0xffffff;
+        count = u32(&b);
+        if (rf & 0x1)
+            data = base + (int32_t)u32(&b);
+        if (rf & 0x4)
+            first = u32(&b);
+        if (b.bad || count > MAX_SAMPLES)
+            return -1;
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t d = (rf & 0x100) ? u32(&b) : duration;
+            uint32_t n = (rf & 0x200) ? u32(&b) : size;
+            uint32_t f = (rf & 0x400) ? u32(&b) : (i == 0 && (rf & 0x4)) ? first : flags;
+            int64_t cts = 0;
+
+            if (rf & 0x800)
+                cts = version ? (int64_t)(int32_t)u32(&b) : (int64_t)u32(&b);
+            if (b.bad || add_sample(t, data, n, t->end_dts, cts, f) != 0)
+                return -1;
+            data += n;
+            t->end_dts += d;
+        }
+    }
+    return 0;
+}
+
+/* Every top-level moof, in file order. */
+static int
+scan_fragments(mp4 *m, papaya_io *io)
+{
+    int64_t pos = 0, size = io->size(io->opaque);
+    uint32_t type, header;
+    uint64_t box;
+
+    while (top_box(io, pos, size, &type, &box, &header) == 0) {
+        if (type == FOURCC('m', 'o', 'o', 'f')) {
+            uint8_t *buf;
+            rd r, traf;
+            uint32_t t;
+            int err = 0;
+
+            if (box - header > MAX_MOOF)
+                return -1;
+            buf = malloc((size_t)(box - header) + 1);
+            if (!buf || papaya_io_read_at(io, pos + header, buf, (size_t)(box - header)) != 0) {
+                free(buf);
+                return -1;
+            }
+            r.p = buf;
+            r.end = buf + (box - header);
+            r.bad = 0;
+            while (!err && next_box(&r, &t, &traf))
+                if (t == FOURCC('t', 'r', 'a', 'f'))
+                    err = parse_traf(m, traf, pos);
+            free(buf);
+            if (err)
+                return -1;
+        }
+        pos += (int64_t)box;
+    }
+    return 0;
+}
 /* ---- backend --------------------------------------------------------------- */
 
 static int
@@ -634,6 +844,28 @@ mp4_close(void *ctx)
     free(m);
 }
 
+/* Reads the fragments, then sets the durations the moov could not know. */
+static int
+fragments_done(mp4 *m, papaya_demuxer *d, papaya_io *io)
+{
+    int64_t longest = 0;
+
+    if (scan_fragments(m, io) != 0)
+        return -1;
+    for (int i = 0; i < m->track_count; i++) {
+        track *t = &m->tracks[i];
+
+        if (!t->count)
+            continue;
+        t->info->duration = (t->samples[t->count - 1].pts + 1) * 1000000 / t->timescale;
+        if (t->info->duration > longest)
+            longest = t->info->duration;
+    }
+    if (papaya_demux_duration(d) <= 0)
+        papaya_demux_set_duration(d, longest);
+    return 0;
+}
+
 static void *
 mp4_open(papaya_demuxer *d, papaya_io *io)
 {
@@ -642,28 +874,11 @@ mp4_open(papaya_demuxer *d, papaya_io *io)
     size_t moov_size = 0;
     mp4 *m;
 
-    /* Find moov among the top-level boxes (it may follow mdat). */
-    while (size < 0 || pos + 8 <= size) {
-        uint8_t h[16];
-        uint64_t box;
-        uint32_t type, header = 8;
+    uint32_t type, header;
+    uint64_t box;
 
-        if (papaya_io_read_at(io, pos, h, 8) != 0)
-            break;
-        box = (uint64_t)h[0] << 24 | (uint64_t)h[1] << 16 | (uint64_t)h[2] << 8 | h[3];
-        type = FOURCC(h[4], h[5], h[6], h[7]);
-        if (box == 1) {
-            if (papaya_io_read_at(io, pos + 8, h + 8, 8) != 0)
-                break;
-            box = 0;
-            for (int i = 8; i < 16; i++)
-                box = box << 8 | h[i];
-            header = 16;
-        } else if (box == 0 && size >= 0) {
-            box = (uint64_t)(size - pos);
-        }
-        if (box < header)
-            break;
+    /* Find moov among the top-level boxes (it may follow mdat). */
+    while (top_box(io, pos, size, &type, &box, &header) == 0) {
         if (type == FOURCC('m', 'o', 'o', 'v')) {
             if (box - header > MAX_MOOV)
                 return NULL;
@@ -686,9 +901,9 @@ mp4_open(papaya_demuxer *d, papaya_io *io)
     }
     m->io = io;
     {
-        rd r = { moov, moov + moov_size, 0 }, b;
-        uint32_t type;
+        rd r = { moov, moov + moov_size, 0 }, b, mvex;
 
+        m->fragmented = find_box(r, FOURCC('m', 'v', 'e', 'x'), &mvex);
         if (find_box(r, FOURCC('m', 'v', 'h', 'd'), &b)) {
             uint32_t v = u8(&b);
 
@@ -703,9 +918,11 @@ mp4_open(papaya_demuxer *d, papaya_io *io)
         while (next_box(&r, &type, &b))
             if (type == FOURCC('t', 'r', 'a', 'k'))
                 parse_trak(m, d, b);
+        if (m->fragmented)
+            parse_mvex(m, mvex);
     }
     free(moov);
-    if (m->track_count == 0) {
+    if (m->track_count == 0 || (m->fragmented && fragments_done(m, d, io) != 0)) {
         mp4_close(m);
         return NULL;
     }

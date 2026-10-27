@@ -224,6 +224,159 @@ build_mp4(buf *b, const ivf_frames *v)
 }
 
 static void
+patch32(buf *b, size_t at, uint32_t v)
+{
+    b->data[at] = (uint8_t)(v >> 24);
+    b->data[at + 1] = (uint8_t)(v >> 16);
+    b->data[at + 2] = (uint8_t)(v >> 8);
+    b->data[at + 3] = (uint8_t)v;
+}
+
+/* The same track fragmented: an empty sample table and mvex in moov, then
+ * fragments of FRAG frames, each a moof (tfhd, tfdt, trun) and its mdat. The
+ * moov leaves the duration unknown, as live-made files do. */
+#define FRAG 4
+
+static void
+build_fmp4(buf *b, const ivf_frames *v)
+{
+    size_t moov, trak, mdia, minf, stbl, stsd, entry, mvex, at = 0;
+
+    put(b, "\0\0\0\x14" "ftypiso6\0\0\0\0iso6", 20);
+    moov = open_box(b, "moov");
+    {
+        size_t mvhd = open_box(b, "mvhd");
+
+        zeros(b, 12);
+        be32(b, 30);
+        be32(b, 0); /* duration: unknown */
+        zeros(b, 80);
+        close_box(b, mvhd);
+    }
+    trak = open_box(b, "trak");
+    {
+        size_t tkhd = open_box(b, "tkhd");
+
+        zeros(b, 12);
+        be32(b, 1); /* track_ID */
+        zeros(b, 64);
+        close_box(b, tkhd);
+    }
+    mdia = open_box(b, "mdia");
+    {
+        size_t mdhd = open_box(b, "mdhd"), hdlr;
+
+        zeros(b, 12);
+        be32(b, 30);
+        be32(b, 0);
+        be16(b, 0x55c4);
+        zeros(b, 2);
+        close_box(b, mdhd);
+        hdlr = open_box(b, "hdlr");
+        zeros(b, 8);
+        put(b, "vide", 4);
+        zeros(b, 13);
+        close_box(b, hdlr);
+    }
+    minf = open_box(b, "minf");
+    stbl = open_box(b, "stbl");
+    stsd = open_box(b, "stsd");
+    zeros(b, 4);
+    be32(b, 1);
+    entry = open_box(b, "av01");
+    zeros(b, 6);
+    be16(b, 1);
+    zeros(b, 16);
+    be16(b, (uint32_t)v->width);
+    be16(b, (uint32_t)v->height);
+    zeros(b, 50);
+    close_box(b, entry);
+    close_box(b, stsd);
+    {
+        const char *empty[] = { "stts", "stsc", "stco" };
+
+        for (int i = 0; i < 3; i++) {
+            size_t box = open_box(b, empty[i]);
+
+            zeros(b, 8);
+            close_box(b, box);
+        }
+        {
+            size_t stsz = open_box(b, "stsz");
+
+            zeros(b, 12);
+            close_box(b, stsz);
+        }
+    }
+    close_box(b, stbl);
+    close_box(b, minf);
+    close_box(b, mdia);
+    close_box(b, trak);
+    mvex = open_box(b, "mvex");
+    {
+        size_t trex = open_box(b, "trex");
+
+        zeros(b, 4);
+        be32(b, 1);       /* track_ID */
+        be32(b, 1);       /* sample description */
+        be32(b, 1);       /* duration: one frame */
+        be32(b, 0);       /* size: in each trun */
+        be32(b, 0x10000); /* flags: not a sync sample */
+        close_box(b, trex);
+    }
+    close_box(b, mvex);
+    close_box(b, moov);
+
+    for (int first = 0; first < v->count; first += FRAG) {
+        int n = v->count - first < FRAG ? v->count - first : FRAG;
+        size_t moof = b->size, traf, data_offset_at, bytes = 0;
+
+        open_box(b, "moof");
+        {
+            size_t mfhd = open_box(b, "mfhd");
+
+            zeros(b, 4);
+            be32(b, (uint32_t)(first / FRAG + 1));
+            close_box(b, mfhd);
+        }
+        traf = open_box(b, "traf");
+        {
+            size_t tfhd = open_box(b, "tfhd"), tfdt, trun;
+
+            be32(b, 0x20000); /* default-base-is-moof */
+            be32(b, 1);
+            close_box(b, tfhd);
+            tfdt = open_box(b, "tfdt");
+            be32(b, 0x01000000); /* version 1 */
+            be32(b, 0);
+            be32(b, (uint32_t)first);
+            close_box(b, tfdt);
+            trun = open_box(b, "trun");
+            be32(b, 0x000205); /* data offset, first sample flags, sizes */
+            be32(b, (uint32_t)n);
+            data_offset_at = b->size;
+            be32(b, 0);
+            be32(b, first == 0 ? 0x02000000 : 0x10000); /* only frame 0 is a keyframe */
+            for (int i = 0; i < n; i++)
+                be32(b, v->sizes[first + i]);
+            close_box(b, trun);
+        }
+        close_box(b, traf);
+        close_box(b, moof);
+        patch32(b, data_offset_at, (uint32_t)(b->size - moof + 8));
+        {
+            size_t mdat = open_box(b, "mdat");
+
+            for (int i = 0; i < n; i++)
+                bytes += v->sizes[first + i];
+            put(b, v->frames + at, bytes);
+            at += bytes;
+            close_box(b, mdat);
+        }
+    }
+}
+
+static void
 hash_frame(md5_ctx *m, const papaya_frame *f)
 {
     int cw = (f->width + 1) / 2, ch = (f->height + 1) / 2;
@@ -235,8 +388,10 @@ hash_frame(md5_ctx *m, const papaya_frame *f)
             md5_update(m, f->planes[p] + (size_t)y * (size_t)f->strides[p], (size_t)cw);
 }
 
+typedef void (*builder)(buf *b, const ivf_frames *v);
+
 TEST
-av1_in_mp4_bit_exact(void)
+av1_in_mp4_bit_exact(builder build)
 {
     ivf_frames v;
     buf b = { 0 };
@@ -251,9 +406,11 @@ av1_in_mp4_bit_exact(void)
     int64_t last_pts = -1;
 
     ASSERT_EQ(0, read_ivf(AV1_IVF, &v));
-    build_mp4(&b, &v);
+    build(&b, &v);
     d = papaya_demux_open(papaya_io_open_memory(b.data, b.size));
     ASSERT(d != NULL);
+    /* The fragmented file's duration comes from its samples. */
+    ASSERT_EQ((int64_t)v.count * 1000000 / 30, papaya_demux_duration(d));
     ASSERT_STR_EQ("mp4", papaya_demux_name(d));
     ASSERT_EQ(1, papaya_demux_stream_count(d));
     ASSERT_EQ(PAPAYA_CODEC_AV1, papaya_demux_stream(d, 0)->codec);
@@ -301,13 +458,13 @@ av1_in_mp4_bit_exact(void)
 }
 
 TEST
-truncated_mp4_is_safe(void)
+truncated_mp4_is_safe(builder build)
 {
     ivf_frames v;
     buf b = { 0 };
 
     ASSERT_EQ(0, read_ivf(AV1_IVF, &v));
-    build_mp4(&b, &v);
+    build(&b, &v);
     /* Every cut of the file opens or is refused, and reads end, without crashing. */
     for (size_t cut = 8; cut < b.size; cut += 37) {
         papaya_demuxer *d = papaya_demux_open(papaya_io_open_memory(b.data, cut));
@@ -326,8 +483,10 @@ truncated_mp4_is_safe(void)
 
 SUITE(mp4)
 {
-    RUN_TEST(av1_in_mp4_bit_exact);
-    RUN_TEST(truncated_mp4_is_safe);
+    RUN_TEST1(av1_in_mp4_bit_exact, build_mp4);
+    RUN_TEST1(av1_in_mp4_bit_exact, build_fmp4);
+    RUN_TEST1(truncated_mp4_is_safe, build_mp4);
+    RUN_TEST1(truncated_mp4_is_safe, build_fmp4);
 }
 
 GREATEST_MAIN_DEFS();
