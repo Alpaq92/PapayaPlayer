@@ -97,6 +97,17 @@ ensure_texture(const papaya_frame *f, SDL_Colorspace cs)
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STREAMING);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, f->width);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, f->height);
+    if (SDL_COLORSPACETRANSFER(cs) == SDL_TRANSFER_CHARACTERISTICS_PQ) {
+        /* HDR10: diffuse white at 203 cd/m2 (ITU-R BT.2408), and the content's
+         * peak as headroom, so SDL scales highlights into what the screen
+         * has instead of clipping them. Without metadata, 1000 cd/m2, the
+         * usual mastering peak. */
+        float peak = f->color.max_cll ? (float)f->color.max_cll
+                     : f->color.max_luminance > 0 ? f->color.max_luminance : 1000.0f;
+
+        SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT, 203.0f);
+        SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT, peak > 203.0f ? peak / 203.0f : 1.0f);
+    }
     ui.texture = SDL_CreateTextureWithProperties(reaktor_sdl_renderer(ui.app), props);
     SDL_DestroyProperties(props);
     if (!ui.texture && fmt == SDL_PIXELFORMAT_P010) {

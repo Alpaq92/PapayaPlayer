@@ -6,6 +6,9 @@
  *   ITT_CORES_CMD   its "set number of cores" control
  *   ITT_CREATE_EXTRA(ip)  extra create fields, may be empty
  *   ITT_BIT_DEPTH(op)     a decode op's luma bit depth (8 where the API has none)
+ *   ITT_STREAM_COLOR(c)   optional: fills c->color from the bitstream once its
+ *                         headers are in (what the container left unspecified)
+ *   ITT_PICTURE_COLOR(c, f) optional: per-picture colour metadata (SEI) into f
  * and the parameter-set parser itt_to_annexb_config for its configuration
  * record (avcC / hvcC).
  *
@@ -148,6 +151,9 @@ itt_headers(itt_ctx *c, const uint8_t *data, size_t size)
             c->height = (int)op.s_ivd_video_decode_op_t.u4_pic_ht;
             c->sample_bytes = ITT_BIT_DEPTH(&op.s_ivd_video_decode_op_t) > 8 ? 2 : 1;
             c->header_done = 1;
+#ifdef ITT_STREAM_COLOR
+            ITT_STREAM_COLOR(c);
+#endif
         }
         if (used == 0 || used > size)
             break;
@@ -237,6 +243,9 @@ itt_picture(itt_ctx *c, const ivd_video_decode_op_t *op)
                    (size_t)pw * bytes);
     }
     f->color = c->color;
+#ifdef ITT_PICTURE_COLOR
+    ITT_PICTURE_COLOR(c, f);
+#endif
     if (f->color.matrix == 2) /* unspecified: the usual guess by size */
         f->color.matrix = h > 576 ? 1 : 6;
     f->pts = c->pts[op->u4_ts % ITT_TS_SLOTS];

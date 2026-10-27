@@ -12,6 +12,13 @@
 #define ITT_CREATE_EXTRA(ip) ((ip).u4_enable_hbd = 1)
 #define ITT_BIT_DEPTH(op) ((op)->u4_bit_depth)
 
+/* HDR in a raw stream (MPEG-TS, Annex B) is known only from the bitstream:
+ * the SPS's VUI and the mastering display SEI. */
+static void hevc_stream_color(void *ctx);
+static void hevc_picture_color(void *ctx, papaya_frame *f);
+#define ITT_STREAM_COLOR(c) hevc_stream_color(c)
+#define ITT_PICTURE_COLOR(c, f) hevc_picture_color(c, f)
+
 #include "ittiam_video.h"
 
 /* hvcC (ISO/IEC 14496-15 8.3.3.1): arrays of VPS/SPS/PPS/SEI units and the
@@ -42,6 +49,58 @@ itt_to_annexb_config(itt_ctx *c, const uint8_t *p, size_t n)
         }
     }
     return 0;
+}
+
+/* The VUI's colour description, for whatever the container left
+ * unspecified (2). */
+static void
+hevc_stream_color(void *ctx)
+{
+    itt_ctx *c = ctx;
+    ihevcd_cxa_ctl_get_vui_params_ip_t ip;
+    ihevcd_cxa_ctl_get_vui_params_op_t op;
+
+    memset(&ip, 0, sizeof ip);
+    memset(&op, 0, sizeof op);
+    ip.e_cmd = IVD_CMD_VIDEO_CTL;
+    ip.e_sub_cmd = (IVD_CONTROL_API_COMMAND_TYPE_T)IHEVCD_CXA_CMD_CTL_GET_VUI_PARAMS;
+    ip.u4_size = sizeof ip;
+    op.u4_size = sizeof op;
+    if (ITT_API(c->codec, &ip, &op) != IV_SUCCESS || !op.u1_video_signal_type_present_flag)
+        return;
+    if (op.u1_colour_description_present_flag) {
+        if (c->color.primaries == 2)
+            c->color.primaries = op.u1_colour_primaries;
+        if (c->color.transfer == 2)
+            c->color.transfer = op.u1_transfer_characteristics;
+        if (c->color.matrix == 2)
+            c->color.matrix = op.u1_matrix_coefficients;
+    }
+    if (!c->color.full_range)
+        c->color.full_range = op.u1_video_full_range_flag;
+}
+
+/* The mastering display SEI of the picture on display, when the container
+ * gave no luminance (units of 0.0001 cd/m2). */
+static void
+hevc_picture_color(void *ctx, papaya_frame *f)
+{
+    itt_ctx *c = ctx;
+    ihevcd_cxa_ctl_get_sei_mastering_params_ip_t ip;
+    ihevcd_cxa_ctl_get_sei_mastering_params_op_t op;
+
+    if (f->color.max_luminance > 0)
+        return;
+    memset(&ip, 0, sizeof ip);
+    memset(&op, 0, sizeof op);
+    ip.e_cmd = IVD_CMD_VIDEO_CTL;
+    ip.e_sub_cmd = (IVD_CONTROL_API_COMMAND_TYPE_T)IHEVCD_CXA_CMD_CTL_GET_SEI_MASTERING_PARAMS;
+    ip.u4_size = sizeof ip;
+    op.u4_size = sizeof op;
+    if (ITT_API(c->codec, &ip, &op) != IV_SUCCESS)
+        return;
+    f->color.max_luminance = (float)op.u4_max_display_mastering_luminance / 10000.0f;
+    f->color.min_luminance = (float)op.u4_min_display_mastering_luminance / 10000.0f;
 }
 
 static int
