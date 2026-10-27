@@ -11,6 +11,7 @@ static const papaya_demux_backend *const backends[] = {
     &papaya_demux_mp4,
     &papaya_demux_wav,
     &papaya_demux_mp3,
+    &papaya_demux_adts,
 };
 
 struct papaya_demuxer {
@@ -78,8 +79,7 @@ papaya_demux_open(papaya_io *io)
 {
     uint8_t head[PROBE_SIZE];
     size_t got = 0;
-    const papaya_demux_backend *best = NULL;
-    int best_score = 0;
+    int scores[sizeof backends / sizeof backends[0]];
     papaya_demuxer *d;
 
     if (!io)
@@ -93,30 +93,37 @@ papaya_demux_open(papaya_io *io)
             got += (size_t)n;
         }
     }
-    for (size_t i = 0; i < sizeof backends / sizeof backends[0]; i++) {
-        int score = backends[i]->probe(head, got);
-
-        if (score > best_score) {
-            best_score = score;
-            best = backends[i];
-        }
-    }
-    d = best ? calloc(1, sizeof *d) : NULL;
+    for (size_t i = 0; i < sizeof backends / sizeof backends[0]; i++)
+        scores[i] = backends[i]->probe(head, got);
+    d = calloc(1, sizeof *d);
     if (!d) {
         papaya_io_close(&io);
         return NULL;
     }
-    d->backend = best;
     d->io = io;
-    d->duration = PAPAYA_NOPTS;
-    io->seek(io->opaque, 0);
-    d->ctx = best->open(d, io);
-    if (!d->ctx) {
-        papaya_io_close(&d->io);
-        free(d);
-        return NULL;
+    /* Best score first; a backend that cannot open the file passes it on
+     * (an ID3 tag, say, opens both MP3 and ADTS files). */
+    for (;;) {
+        size_t best = 0;
+
+        for (size_t i = 1; i < sizeof backends / sizeof backends[0]; i++)
+            if (scores[i] > scores[best])
+                best = i;
+        if (scores[best] <= 0)
+            break;
+        scores[best] = 0;
+        d->backend = backends[best];
+        d->stream_count = 0;
+        memset(d->streams, 0, sizeof d->streams);
+        d->duration = PAPAYA_NOPTS;
+        io->seek(io->opaque, 0);
+        d->ctx = d->backend->open(d, io);
+        if (d->ctx)
+            return d;
     }
-    return d;
+    papaya_io_close(&d->io);
+    free(d);
+    return NULL;
 }
 
 void

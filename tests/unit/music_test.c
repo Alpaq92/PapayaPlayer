@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "aac_encode.h"
 #include "greatest.h"
 #include "papaya/decode.h"
 #include "papaya/demux.h"
@@ -347,6 +348,89 @@ mp3_duration_and_seek(void)
     PASS();
 }
 
+/* ---- ADTS: libxaac's encoder writes the file, ID3v2 tag in front ------- */
+
+static void
+append_unit(void *user, const unsigned char *data, int size)
+{
+    bytes *b = user;
+    uint8_t *grown = realloc(b->data, b->size + (size_t)size);
+
+    if (!grown)
+        return;
+    memcpy(grown + b->size, data, (size_t)size);
+    b->data = grown;
+    b->size += (size_t)size;
+}
+
+TEST
+adts_round_trip(int aot)
+{
+    enum { IN_RATE = 48000, N = 96000 };
+    static short pcm[N * 2];
+    unsigned char config[64];
+    int config_size = 0, frames;
+    /* An empty ID3v2.4 tag first: MP3 tries the file before ADTS takes it. */
+    bytes file = { NULL, 0 };
+    papaya_demuxer *dm;
+    const papaya_stream_info *s;
+    papaya_frame_pool *pool;
+    papaya_decoder *d;
+    papaya_packet *p;
+    papaya_frame *f;
+    long samples = 0;
+    int rate = 0, channels = 0;
+    static const unsigned char id3[10] = { 'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0 };
+
+    append_unit(&file, id3, sizeof id3);
+    for (size_t i = 0; i < N; i++)
+        pcm[2 * i] = pcm[2 * i + 1] = (short)(12000 * sin(2 * 3.14159265358979 * 440 * (double)i / IN_RATE));
+    frames = aac_encode(aot, 1, IN_RATE, 2, aot == 2 ? 128000 : 64000, pcm, N, append_unit, &file, config,
+                        &config_size);
+    ASSERT(frames > 20);
+    dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
+    ASSERT(dm != NULL);
+    ASSERT_STR_EQ("adts", papaya_demux_name(dm));
+    s = papaya_demux_stream(dm, 0);
+    ASSERT_EQ(PAPAYA_CODEC_AAC, s->codec);
+    /* HE-AAC's ADTS header carries the core: half the rate, plain AAC. */
+    ASSERT_EQ(aot == 2 ? IN_RATE : IN_RATE / 2, s->sample_rate);
+    ASSERT_EQ((int64_t)frames * 1024 * 1000000 / s->sample_rate, papaya_demux_duration(dm));
+    pool = papaya_frame_pool_new();
+    d = papaya_decoder_open(s, pool);
+    ASSERT(d != NULL);
+    while (papaya_demux_read(dm, &p) == 0) {
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            rate = f->sample_rate;
+            channels = f->channels;
+            samples += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    ASSERT_EQ(IN_RATE, rate); /* the decoder finds the SBR itself */
+    ASSERT_EQ(2, channels);
+    ASSERT(samples >= (long)(frames - 2) * 1024 * (rate / s->sample_rate));
+    ASSERT_EQ(0, papaya_demux_seek(dm, 1000000));
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT(p->pts <= 1000000 && p->pts > 1000000 - 1024 * 1000000 / s->sample_rate);
+    papaya_packet_free(&p);
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    /* Every cut opens or is refused, and reads end. */
+    for (size_t cut = 4; cut < file.size; cut += 1499) {
+        papaya_demuxer *t = papaya_demux_open(papaya_io_open_memory(file.data, cut));
+
+        while (t && papaya_demux_read(t, &p) == 0)
+            papaya_packet_free(&p);
+        papaya_demux_close(&t);
+    }
+    free(file.data);
+    PASS();
+}
+
 SUITE(music)
 {
     RUN_TEST(wav_layouts);
@@ -354,6 +438,8 @@ SUITE(music)
     RUN_TEST(truncated_wav_is_safe);
     RUN_TEST(mp3_vectors);
     RUN_TEST(mp3_duration_and_seek);
+    RUN_TEST1(adts_round_trip, 2); /* AAC-LC */
+    RUN_TEST1(adts_round_trip, 5); /* HE-AAC */
 }
 
 GREATEST_MAIN_DEFS();

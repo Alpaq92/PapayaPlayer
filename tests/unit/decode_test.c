@@ -297,7 +297,7 @@ aac_round_trip(int aot)
 
     for (size_t i = 0; i < N; i++)
         pcm[2 * i] = pcm[2 * i + 1] = (short)(12000 * sin(2 * PI * 440 * (double)i / RATE));
-    ASSERT(aac_encode(aot, RATE, CH, aot == 2 ? 128000 : aot == 5 ? 64000 : 32000, pcm, N, aac_au,
+    ASSERT(aac_encode(aot, 0, RATE, CH, aot == 2 ? 128000 : aot == 5 ? 64000 : 32000, pcm, N, aac_au,
                       &out, config, &config_size) > 10);
     s.extradata = config;
     s.extradata_size = (size_t)config_size;

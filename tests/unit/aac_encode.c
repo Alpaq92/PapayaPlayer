@@ -41,7 +41,7 @@ free_aligned(pVOID q)
 }
 
 int
-aac_encode(int aot, int rate, int channels, int bitrate, const short *pcm, int samples,
+aac_encode(int aot, int adts, int rate, int channels, int bitrate, const short *pcm, int samples,
            void (*au)(void *user, const unsigned char *data, int size), void *user,
            unsigned char *config, int *config_size)
 {
@@ -65,7 +65,8 @@ aac_encode(int aot, int rate, int channels, int bitrate, const short *pcm, int s
     in->i_samp_freq = (UWORD32)rate;
     in->ui_pcm_wd_sz = 16;
     in->i_mps_tree_config = -1;
-    in->i_use_es = 1;
+    in->i_use_adts = adts;
+    in->i_use_es = !adts;
     in->ccfl_idx = NO_SBR_CCFL_1024;
     in->frame_length = 1024;
     in->random_access_interval = DEFAULT_RAP_INTERVAL_IN_MS;
