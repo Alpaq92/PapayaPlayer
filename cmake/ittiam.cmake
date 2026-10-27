@@ -46,16 +46,17 @@ function(_itt_sources root out)
     set(${out} ${_srcs} PARENT_SCOPE)
 endfunction()
 
-# The threading layer, shared: papaya's Win32 version (spike S2), or libavc's
-# pthread one, whose functions cover what libhevc calls too.
-if(WIN32)
-    add_library(papaya_ithread STATIC "${_itt_shim}/ithread_win32.c")
-else()
-    add_library(papaya_ithread STATIC "${_itt_root}/libavc/common/ithread.c")
+# The threading layer, shared by both libraries and the same on every OS:
+# ithread_papaya.c over papaya's own threads. It carries its own copy of
+# thread.c so the decoders do not link back into papaya_core; in any link
+# papaya_core's thread.c comes first, so the copy is never pulled in.
+add_library(papaya_ithread STATIC "${_itt_shim}/ithread_papaya.c" "${PROJECT_SOURCE_DIR}/papaya/core/thread.c")
+target_include_directories(papaya_ithread PRIVATE "${_itt_root}/libavc/common" "${PROJECT_SOURCE_DIR}/papaya/include"
+                           "${CMAKE_BINARY_DIR}/papaya/include")
+target_compile_definitions(papaya_ithread PRIVATE PAPAYA_STATIC_DEFINE)
+if(UNIX)
     target_link_libraries(papaya_ithread PUBLIC Threads::Threads)
-    target_compile_options(papaya_ithread PRIVATE -w)
 endif()
-target_include_directories(papaya_ithread PRIVATE "${_itt_root}/libavc/common")
 set_target_properties(papaya_ithread PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 function(_itt_library name root)

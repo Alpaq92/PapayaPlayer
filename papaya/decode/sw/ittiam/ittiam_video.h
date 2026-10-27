@@ -15,6 +15,7 @@
  * Packets from MP4 and Matroska are length-prefixed; the decoders want
  * Annex B start codes, so each packet is rewritten. Output is in display
  * order, so packet times travel through the decoder's u4_ts tag. */
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,34 +43,36 @@ static void itt_close(void *ctx);
 static int itt_config_nal(itt_ctx *c, const uint8_t *p, size_t n);
 static int itt_to_annexb_config(itt_ctx *c, const uint8_t *p, size_t n);
 
+/* Aligned blocks, the same on every OS: malloc with room to align, and the
+ * block's own pointer kept just before the aligned one. */
 static void *
 itt_alloc(void *ctx, WORD32 alignment, WORD32 size)
 {
-    (void)ctx;
-    if (size <= 0)
-        return NULL;
-#if defined(_WIN32)
-    return _aligned_malloc((size_t)size, (size_t)alignment);
-#else
-    {
-        void *p = NULL;
+    size_t align = alignment > (WORD32)sizeof(void *) ? (size_t)alignment : sizeof(void *);
+    unsigned char *raw, *p;
 
-        if (alignment < (WORD32)sizeof(void *))
-            alignment = (WORD32)sizeof(void *);
-        return posix_memalign(&p, (size_t)alignment, (size_t)size) ? NULL : p;
-    }
-#endif
+    (void)ctx;
+    if (size <= 0 || (align & (align - 1)))
+        return NULL;
+    raw = malloc((size_t)size + align + sizeof(void *));
+    if (!raw)
+        return NULL;
+    p = raw + sizeof(void *);
+    p += (align - (uintptr_t)p % align) % align;
+    memcpy(p - sizeof(void *), (const void *)&raw, sizeof raw);
+    return p;
 }
 
 static void
 itt_free(void *ctx, void *p)
 {
+    void *raw;
+
     (void)ctx;
-#if defined(_WIN32)
-    _aligned_free(p);
-#else
-    free(p);
-#endif
+    if (!p)
+        return;
+    memcpy((void *)&raw, (unsigned char *)p - sizeof(void *), sizeof raw);
+    free(raw);
 }
 
 static int

@@ -112,6 +112,7 @@ papaya_sleep_us(int64_t us)
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <time.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
@@ -249,8 +250,10 @@ papaya_sleep_us(int64_t us)
 {
     struct timespec ts;
 
-    if (us <= 0)
+    if (us <= 0) {
+        sched_yield(); /* as Sleep(0) on Windows: let another thread run */
         return;
+    }
     ts.tv_sec = (time_t)(us / 1000000);
     ts.tv_nsec = (long)(us % 1000000 * 1000);
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {

@@ -2,6 +2,10 @@
 # (spike S2). At the end of their top directory it swaps the pthread
 # common/ithread.c for papaya's Win32 version and links a program against the
 # decoder, without touching their files.
+#
+# Historical: ithread_win32.c was replaced by ithread_papaya.c (one layer for
+# every OS, over papaya's threads), which needs papaya's build. To rerun this
+# spike, check out a revision from before that change.
 set(PAPAYA_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL papaya_spike_fix)
 
