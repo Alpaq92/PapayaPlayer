@@ -8,6 +8,7 @@
 #define ITT_PREFIX(x) ih264d_##x
 #define ITT_API ih264d_api_function
 #define ITT_CORES_CMD IH264D_CMD_CTL_SET_NUM_CORES
+#define ITT_BIT_DEPTH(op) ((void)(op), 8u)
 #define ITT_CREATE_EXTRA(ip) ((void)0)
 
 #include "ittiam_video.h"

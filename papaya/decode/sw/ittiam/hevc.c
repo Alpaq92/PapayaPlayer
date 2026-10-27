@@ -8,7 +8,9 @@
 #define ITT_PREFIX(x) ihevcd_cxa_##x
 #define ITT_API ihevcd_cxa_api_function
 #define ITT_CORES_CMD IHEVCD_CXA_CMD_CTL_SET_NUM_CORES
-#define ITT_CREATE_EXTRA(ip) ((void)0)
+/* Main 10: 16-bit output samples. */
+#define ITT_CREATE_EXTRA(ip) ((ip).u4_enable_hbd = 1)
+#define ITT_BIT_DEPTH(op) ((op)->u4_bit_depth)
 
 #include "ittiam_video.h"
 

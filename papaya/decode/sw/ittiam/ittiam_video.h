@@ -5,6 +5,7 @@
  *   ITT_API         its entry point
  *   ITT_CORES_CMD   its "set number of cores" control
  *   ITT_CREATE_EXTRA(ip)  extra create fields, may be empty
+ *   ITT_BIT_DEPTH(op)     a decode op's luma bit depth (8 where the API has none)
  * and the parameter-set parser itt_to_annexb_config for its configuration
  * record (avcC / hvcC).
  *
@@ -22,6 +23,7 @@ typedef struct {
     int length_size; /* 0: packets are already Annex B */
     int header_done;
     int width, height;
+    int sample_bytes;  /* 2 for 16-bit (high bit depth) output */
     papaya_color color;
     uint8_t *out[3];   /* our copy of the decoded picture (share_disp_buf 0) */
     size_t out_size[3];
@@ -144,6 +146,7 @@ itt_headers(itt_ctx *c, const uint8_t *data, size_t size)
         if (op.s_ivd_video_decode_op_t.u4_pic_wd && op.s_ivd_video_decode_op_t.u4_pic_ht) {
             c->width = (int)op.s_ivd_video_decode_op_t.u4_pic_wd;
             c->height = (int)op.s_ivd_video_decode_op_t.u4_pic_ht;
+            c->sample_bytes = ITT_BIT_DEPTH(&op.s_ivd_video_decode_op_t) > 8 ? 2 : 1;
             c->header_done = 1;
         }
         if (used == 0 || used > size)
@@ -154,10 +157,10 @@ itt_headers(itt_ctx *c, const uint8_t *data, size_t size)
     if (!c->header_done)
         return 0;
     {
-        size_t luma = (size_t)c->width * (size_t)c->height;
+        size_t luma = (size_t)c->width * (size_t)c->height * (size_t)c->sample_bytes;
 
         c->out_size[0] = luma;
-        c->out_size[1] = c->out_size[2] = luma / 4 + (size_t)c->width;
+        c->out_size[1] = c->out_size[2] = luma / 4 + (size_t)c->width * (size_t)c->sample_bytes;
         for (int i = 0; i < 3; i++) {
             free(c->out[i]);
             c->out[i] = malloc(c->out_size[i]);
@@ -219,9 +222,10 @@ itt_picture(itt_ctx *c, const ivd_video_decode_op_t *op)
 {
     const iv_yuv_buf_t *b = &op->s_disp_frm_buf;
     int w = (int)b->u4_y_wd, h = (int)b->u4_y_ht;
-    papaya_frame *f = papaya_frame_get_video(c->pool, PAPAYA_PIX_I420, w, h);
+    size_t bytes = ITT_BIT_DEPTH(op) > 8 ? 2 : 1; /* 16-bit samples above 8 bits */
+    papaya_frame *f = papaya_frame_get_video(c->pool, bytes == 2 ? PAPAYA_PIX_I420_10 : PAPAYA_PIX_I420, w, h);
     const uint8_t *src[3] = { b->pv_y_buf, b->pv_u_buf, b->pv_v_buf };
-    UWORD32 stride[3] = { b->u4_y_strd, b->u4_u_strd, b->u4_v_strd };
+    size_t stride[3] = { b->u4_y_strd * bytes, b->u4_u_strd * bytes, b->u4_v_strd * bytes };
 
     if (!f)
         return NULL;
@@ -229,7 +233,8 @@ itt_picture(itt_ctx *c, const ivd_video_decode_op_t *op)
         int pw = p ? (w + 1) / 2 : w, ph = p ? (h + 1) / 2 : h;
 
         for (int y = 0; y < ph; y++)
-            memcpy(f->planes[p] + (size_t)y * (size_t)f->strides[p], src[p] + (size_t)y * stride[p], (size_t)pw);
+            memcpy(f->planes[p] + (size_t)y * (size_t)f->strides[p], src[p] + (size_t)y * stride[p],
+                   (size_t)pw * bytes);
     }
     f->color = c->color;
     if (f->color.matrix == 2) /* unspecified: the usual guess by size */

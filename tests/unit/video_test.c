@@ -340,6 +340,7 @@ hevc_bit_exact(void)
     } v[] = {
         { "AMP_A_Samsung_7.bin", "93a5875d58072db5539c04e1e943ed9d", 17, 9 },    /* asymmetric partitions */
         { "PICSIZE_A_Bossen_1.bin", "910ff0e6b3739af0b4aba4f6aa6704f8", 10, 0 }, /* 1056x8440, tiles */
+        { "WP_A_MAIN10_Toshiba_3.bit", "c48e853010a234786dc87790d053b03a", 256, 128 }, /* Main 10, weighted prediction */
     };
 
     for (size_t i = 0; i < sizeof v / sizeof v[0]; i++) {
