@@ -15,12 +15,14 @@ add_library(papaya_core
     demux/ivf/ivf.c
     demux/mp4/mp4.c
     demux/wav/wav.c
+    demux/mp3/mp3.c
     demux/webm/webm.cc
     decode/decode.c
     decode/sw/dav1d/dav1d.c
     decode/sw/flac/flac.c
     decode/sw/opus/opus.c
     decode/sw/pcm/pcm.c
+    decode/sw/mp3/mp3.c
     decode/sw/vorbis/vorbis.c
     decode/sw/vpx/vpx.c
     decode/sw/ittiam/avc.c
@@ -43,7 +45,7 @@ set_source_files_properties(decode/sw/ittiam/hevc.c PROPERTIES INCLUDE_DIRECTORI
 target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_avcdec> $<LINK_ONLY:papaya_hevcdec>)
 set_source_files_properties(decode/sw/xaac/aac.c PROPERTIES INCLUDE_DIRECTORIES
     "${PROJECT_SOURCE_DIR}/third_party/libxaac/common;${PROJECT_SOURCE_DIR}/third_party/libxaac/decoder")
-target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_xaacdec>)
+target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_xaacdec> papaya_minimp3)
 if(NOT PAPAYA_SHARED_LIBS)
     target_compile_definitions(papaya_core PUBLIC PAPAYA_STATIC_DEFINE)
 endif()

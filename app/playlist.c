@@ -8,7 +8,7 @@
 #include "reaktor/reaktor.h"
 
 static const char *const media_ext[] = {
-    "webm", "mkv", "mka", "ivf", "mp4", "m4v", "m4a", "mov", "wav", NULL,
+    "webm", "mkv", "mka", "ivf", "mp4", "m4v", "m4a", "mov", "wav", "mp3", "mp2", NULL,
 };
 
 static int

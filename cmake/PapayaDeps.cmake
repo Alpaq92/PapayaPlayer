@@ -82,6 +82,22 @@ if(APPLE)
                                                   "-framework AudioToolbox")
 endif()
 
+# minimp3 (MP3, CC0): a single header; its implementation goes in a file of
+# its own, generated here, with float output for our decoder.
+file(WRITE "${CMAKE_BINARY_DIR}/minimp3/minimp3.c"
+     "#define MINIMP3_IMPLEMENTATION
+#include \"minimp3.h\"
+")
+add_library(papaya_minimp3 STATIC "${CMAKE_BINARY_DIR}/minimp3/minimp3.c")
+target_include_directories(papaya_minimp3 PUBLIC "${_tp}/minimp3")
+target_compile_definitions(papaya_minimp3 PUBLIC MINIMP3_FLOAT_OUTPUT)
+set_target_properties(papaya_minimp3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(papaya_minimp3 PRIVATE /W0)
+else()
+    target_compile_options(papaya_minimp3 PRIVATE -w)
+endif()
+
 # dav1d (AV1): our own CMake, since dav1d builds with Meson.
 if(UNIX)
     find_package(Threads REQUIRED)

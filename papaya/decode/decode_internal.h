@@ -26,6 +26,7 @@ extern const papaya_decode_backend papaya_decode_vorbis;
 extern const papaya_decode_backend papaya_decode_flac;
 extern const papaya_decode_backend papaya_decode_aac;
 extern const papaya_decode_backend papaya_decode_pcm;
+extern const papaya_decode_backend papaya_decode_mp3;
 extern const papaya_decode_backend papaya_decode_dav1d;
 extern const papaya_decode_backend papaya_decode_vpx;
 extern const papaya_decode_backend papaya_decode_avc;

@@ -22,6 +22,8 @@ add_test(NAME deps_test COMMAND deps_test)
 
 add_executable(music_test unit/music_test.c)
 target_include_directories(music_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_compile_definitions(music_test PRIVATE
+    MINIMP3_VECTORS="${PROJECT_SOURCE_DIR}/third_party/minimp3/vectors")
 target_link_libraries(music_test PRIVATE papaya_core)
 if(UNIX)
     target_link_libraries(music_test PRIVATE m)

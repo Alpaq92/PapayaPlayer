@@ -43,3 +43,6 @@
 [submodule "third_party/libvpx"]
 	path = third_party/libvpx
 	url = https://chromium.googlesource.com/webm/libvpx
+[submodule "third_party/minimp3"]
+	path = third_party/minimp3
+	url = https://github.com/lieff/minimp3.git

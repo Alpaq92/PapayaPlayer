@@ -10,6 +10,7 @@ static const papaya_demux_backend *const backends[] = {
     &papaya_demux_ivf,
     &papaya_demux_mp4,
     &papaya_demux_wav,
+    &papaya_demux_mp3,
 };
 
 struct papaya_demuxer {

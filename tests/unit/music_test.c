@@ -1,5 +1,6 @@
 /* Audio-only files: demuxer and decoder together. */
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -215,11 +216,144 @@ truncated_wav_is_safe(void)
     PASS();
 }
 
+/* ---- MP3: minimp3's conformance vectors through our demuxer ------------- */
+
+static uint8_t *
+slurp(const char *path, size_t *size)
+{
+    FILE *f = fopen(path, "rb");
+    uint8_t *data = NULL;
+    long n;
+
+    *size = 0;
+    if (!f)
+        return NULL;
+    n = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+    if (n >= 0 && fseek(f, 0, SEEK_SET) == 0) {
+        data = malloc((size_t)n + 1);
+        if (data && fread(data, 1, (size_t)n, f) == (size_t)n)
+            *size = (size_t)n;
+    }
+    fclose(f);
+    return data;
+}
+
+/* PSNR of the decoded file against its 16-bit reference, as minimp3's own
+ * test measures it; -1 if the length is off by more than two frames. */
+static double
+mp3_psnr(const char *name, int *rate)
+{
+    char path[1024];
+    size_t ref_size, ref_samples, got = 0;
+    uint8_t *ref;
+    papaya_demuxer *dm;
+    papaya_frame_pool *pool;
+    papaya_decoder *d;
+    papaya_packet *p;
+    papaya_frame *f;
+    double mse = 0;
+
+    snprintf(path, sizeof path, "%s/%s.pcm", MINIMP3_VECTORS, name);
+    ref = slurp(path, &ref_size);
+    if (!ref)
+        return -2;
+    ref_samples = ref_size / 2;
+    snprintf(path, sizeof path, "%s/%s.bit", MINIMP3_VECTORS, name);
+    dm = papaya_demux_open(papaya_io_open_file(path));
+    if (!dm || strcmp(papaya_demux_name(dm), "mp3") != 0) {
+        papaya_demux_close(&dm);
+        free(ref);
+        return -3;
+    }
+    pool = papaya_frame_pool_new();
+    d = papaya_decoder_open(papaya_demux_stream(dm, 0), pool);
+    while (d && papaya_demux_read(dm, &p) == 0) {
+        papaya_decoder_send(d, p);
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            const float *s = (const float *)f->audio[0];
+
+            *rate = f->sample_rate;
+            for (int i = 0; i < f->samples * f->channels; i++, got++) {
+                double v = (double)s[i] * 32768.0, r;
+
+                if (got >= ref_samples)
+                    continue;
+                v = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
+                r = (double)(int16_t)(ref[2 * got] | ref[2 * got + 1] << 8);
+                mse += (lround(v) - r) * (lround(v) - r);
+            }
+            papaya_frame_unref(&f);
+        }
+    }
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    free(ref);
+    /* Like minimp3's test, Layer I and II skip the length check: their
+     * standard references are a little shorter. */
+    if (strncmp(name, "l1", 2) != 0 && strncmp(name, "l2", 2) != 0
+        && (got + 4608u < ref_samples || got > ref_samples + 4608u)) /* two stereo frames */
+        return -1;
+    mse /= got ? (double)got : 1.0;
+    return mse == 0 ? 99.0 : 10.0 * log10(32767.0 * 32767.0 / mse);
+}
+
+TEST
+mp3_vectors(void)
+{
+    static const struct {
+        const char *name;
+        int rate;
+    } v[] = {
+        { "l1-fl1", 32000 },                              /* Layer I */
+        { "l2-fl10", 32000 },                             /* Layer II */
+        { "l3-compl", 48000 },                            /* Layer III compliance */
+        { "l3-he_44khz", 44100 },
+        { "l3-he_free", 44100 },                          /* free format */
+        { "l3-si", 44100 },
+        { "M2L3_bitrate_22_all", 22050 },                 /* MPEG-2, every bitrate */
+        { "l3-nonstandard-id3v2", 48000 },                /* ID3v2 tag first */
+        { "l3-nonstandard-sin1k0db_lame_vbrtag", 44100 }, /* LAME / Xing frame first */
+    };
+
+    for (size_t i = 0; i < sizeof v / sizeof v[0]; i++) {
+        int rate = 0;
+        double psnr = mp3_psnr(v[i].name, &rate);
+
+        ASSERT_EQm(v[i].name, v[i].rate, rate);
+        ASSERTm(v[i].name, psnr >= 96.0);
+    }
+    PASS();
+}
+
+/* The LAME-tagged file: its length is the gapless one, and a seek through
+ * the Xing table lands near the target. */
+TEST
+mp3_duration_and_seek(void)
+{
+    papaya_demuxer *dm = papaya_demux_open(
+        papaya_io_open_file(MINIMP3_VECTORS "/l3-nonstandard-sin1k0db_lame_vbrtag.bit"));
+    papaya_packet *p;
+
+    ASSERT(dm != NULL);
+    /* 1451520 bytes of 16-bit stereo reference: 362880 samples at 44.1 kHz */
+    ASSERT_EQ((int64_t)362880 * 1000000 / 44100, papaya_demux_duration(dm));
+    ASSERT_EQ(0, papaya_demux_seek(dm, 3000000));
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT(p->pts > 2900000 && p->pts < 3100000);
+    papaya_packet_free(&p);
+    papaya_demux_close(&dm);
+    PASS();
+}
+
 SUITE(music)
 {
     RUN_TEST(wav_layouts);
     RUN_TEST(wav_seek_is_exact);
     RUN_TEST(truncated_wav_is_safe);
+    RUN_TEST(mp3_vectors);
+    RUN_TEST(mp3_duration_and_seek);
 }
 
 GREATEST_MAIN_DEFS();

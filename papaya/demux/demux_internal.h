@@ -29,6 +29,7 @@ extern const papaya_demux_backend papaya_demux_webm;
 extern const papaya_demux_backend papaya_demux_ivf;
 extern const papaya_demux_backend papaya_demux_mp4;
 extern const papaya_demux_backend papaya_demux_wav;
+extern const papaya_demux_backend papaya_demux_mp3;
 
 #ifdef __cplusplus
 }
