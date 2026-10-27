@@ -286,7 +286,8 @@ mp3_psnr(const char *name, int *rate)
                     continue;
                 v = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
                 r = (double)(int16_t)(ref[2 * got] | ref[2 * got + 1] << 8);
-                mse += (lround(v) - r) * (lround(v) - r);
+                v = (double)lround(v) - r; /* the error after rounding to 16 bits */
+                mse += v * v;
             }
             papaya_frame_unref(&f);
         }
