@@ -783,7 +783,8 @@ draw_top(struct reaktor_context *ctx, float w)
             reaktor_button(&(reaktor_button_spec){
                 .icon = maximized ? "copy-outline" : "square-outline", .name = "maximize",
                 .tooltip = maximized ? "Restore" : "Maximize", .flat = 1,
-                .box = { .w = 36.0f, .h = 36.0f, .mt = 8.0f }, .on_press = { window_maximize, NULL } });
+                /* a flat icon is 60% of the box height; the squares read big */
+                .box = { .w = 36.0f, .h = 26.0f, .mt = 13.0f }, .on_press = { window_maximize, NULL } });
             reaktor_button(&(reaktor_button_spec){
                 .icon = "close", .name = "close", .tooltip = "Close", .flat = 1,
                 .box = { .w = 36.0f, .h = 36.0f, .mt = 8.0f }, .on_press = { window_close, NULL } });
