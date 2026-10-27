@@ -25,7 +25,8 @@ typedef struct {
     pVOID api;
     void *blocks[MAX_BLOCKS];
     int nblocks;
-    UWORD8 *in, *out;
+    UWORD8 *in;
+    int16_t *out; /* 16-bit interleaved PCM */
     WORD32 in_size;
     WORD32 init_done;
 } xaac_dec;
@@ -232,7 +233,7 @@ aac_decode_packet(void *ctx, const papaya_packet *p, void (*emit)(void *, papaya
     f = papaya_frame_get_audio(c->pool, PAPAYA_SAMPLE_F32, channels, rate, n);
     if (!f)
         return -1;
-    in = (const int16_t *)(const void *)c->d.out;
+    in = c->d.out;
     out = (float *)f->audio[0];
     for (int i = 0; i < n * channels; i++)
         out[i] = (float)in[i] * (1.0f / 32768.0f);

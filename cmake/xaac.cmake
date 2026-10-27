@@ -51,6 +51,12 @@ endfunction()
 # tests can link both.
 _xaac_sources(_xaacdec_srcs common/common.cmake decoder/libxaacdec.cmake)
 _xaac_library(papaya_xaaccommon SOURCES ${_xaacdec_srcs_common})
+# Its plain C QMF functions are left out when the compiler defines
+# __ARM_NEON__ (Apple's does), on the assumption that the ARM asm is linked.
+if(NOT MSVC)
+    set_property(SOURCE "${_xaac_root}/decoder/generic/ixheaacd_qmf_dec_generic.c"
+                 APPEND PROPERTY COMPILE_OPTIONS -U__ARM_NEON__)
+endif()
 _xaac_library(papaya_xaacdec SOURCES ${_xaacdec_srcs}
               INCLUDES "${_xaac_root}/decoder" "${_xaac_root}/decoder/drc_src")
 target_link_libraries(papaya_xaacdec PUBLIC papaya_xaaccommon)
