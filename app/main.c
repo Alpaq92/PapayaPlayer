@@ -413,6 +413,7 @@ ask_for_file(void *user)
 static struct {
     float mouse_x, mouse_y;
     int64_t active_at;       /* last mouse move or key, papaya_time_us() */
+    int win_w, win_h;        /* the size the last frame was laid out for */
 } activity;
 
 static void
@@ -803,7 +804,13 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
     int64_t duration = 0;
     int show_bar;
 
-    (void)app;
+    /* Reaktor places boxes a frame late, so a new size needs a second frame;
+     * when paused nothing else would draw it until the bar hides. */
+    if (win_w != activity.win_w || win_h != activity.win_h) {
+        activity.win_w = win_w;
+        activity.win_h = win_h;
+        reaktor_wake(app);
+    }
     SDL_GetMouseState(&mx, &my);
     if (mx != activity.mouse_x || my != activity.mouse_y) {
         activity.mouse_x = mx;
