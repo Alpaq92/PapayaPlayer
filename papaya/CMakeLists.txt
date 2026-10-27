@@ -19,6 +19,7 @@ add_library(papaya_core
     demux/adts/adts.c
     demux/flac/flac.c
     demux/ogg/ogg.c
+    demux/ts/ts.c
     demux/webm/webm.cc
     decode/decode.c
     decode/sw/dav1d/dav1d.c

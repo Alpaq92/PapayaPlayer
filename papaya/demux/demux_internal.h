@@ -33,6 +33,7 @@ extern const papaya_demux_backend papaya_demux_mp3;
 extern const papaya_demux_backend papaya_demux_adts;
 extern const papaya_demux_backend papaya_demux_flac;
 extern const papaya_demux_backend papaya_demux_ogg;
+extern const papaya_demux_backend papaya_demux_ts;
 
 #ifdef __cplusplus
 }

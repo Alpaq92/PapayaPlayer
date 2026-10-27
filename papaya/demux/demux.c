@@ -14,6 +14,7 @@ static const papaya_demux_backend *const backends[] = {
     &papaya_demux_adts,
     &papaya_demux_flac,
     &papaya_demux_ogg,
+    &papaya_demux_ts,
 };
 
 struct papaya_demuxer {
