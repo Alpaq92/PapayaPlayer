@@ -18,6 +18,7 @@ add_library(papaya_core
     demux/mp3/mp3.c
     demux/adts/adts.c
     demux/flac/flac.c
+    demux/ogg/ogg.c
     demux/webm/webm.cc
     decode/decode.c
     decode/sw/dav1d/dav1d.c

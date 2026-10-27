@@ -24,7 +24,7 @@ add_executable(music_test unit/music_test.c)
 target_include_directories(music_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
 target_compile_definitions(music_test PRIVATE
     MINIMP3_VECTORS="${PROJECT_SOURCE_DIR}/third_party/minimp3/vectors")
-target_link_libraries(music_test PRIVATE papaya_core aac_encode FLAC)
+target_link_libraries(music_test PRIVATE papaya_core aac_encode FLAC vorbisenc vorbis opus Ogg::ogg)
 if(UNIX)
     target_link_libraries(music_test PRIVATE m)
 endif()

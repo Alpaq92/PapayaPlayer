@@ -5,6 +5,9 @@
 #include <string.h>
 
 #include "FLAC/stream_encoder.h"
+#include "ogg/ogg.h"
+#include "opus.h"
+#include "vorbis/vorbisenc.h"
 #include "aac_encode.h"
 #include "greatest.h"
 #include "papaya/decode.h"
@@ -527,6 +530,219 @@ flac_round_trip(int bits)
     PASS();
 }
 
+/* ---- Ogg: Vorbis, Opus and FLAC written here, read back ---------------- */
+
+#define OGG_SECONDS 4
+
+/* Pages a packet into the file; flush pushes out the page at once. */
+static void
+ogg_put(ogg_stream_state *os, bytes *file, ogg_packet *op, int flush)
+{
+    ogg_page og;
+
+    ogg_stream_packetin(os, op);
+    while (flush ? ogg_stream_flush(os, &og) : ogg_stream_pageout(os, &og)) {
+        append_unit(file, og.header, (int)og.header_len);
+        append_unit(file, og.body, (int)og.body_len);
+    }
+}
+
+static float
+tone(long i, int rate)
+{
+    return 0.5f * (float)sin(2 * 3.14159265358979 * 440 * (double)i / rate);
+}
+
+static void
+make_ogg_vorbis(bytes *file)
+{
+    vorbis_info vi;
+    vorbis_comment vc;
+    vorbis_dsp_state vd;
+    vorbis_block vb;
+    ogg_stream_state os;
+    ogg_packet hdr[3], op;
+
+    vorbis_info_init(&vi);
+    vorbis_encode_init_vbr(&vi, 2, RATE, 0.4f);
+    vorbis_comment_init(&vc);
+    vorbis_analysis_init(&vd, &vi);
+    vorbis_block_init(&vd, &vb);
+    ogg_stream_init(&os, 1234);
+    vorbis_analysis_headerout(&vd, &vc, &hdr[0], &hdr[1], &hdr[2]);
+    ogg_put(&os, file, &hdr[0], 1);
+    ogg_put(&os, file, &hdr[1], 0);
+    ogg_put(&os, file, &hdr[2], 1);
+    for (long pos = 0, done = 0; !done;) {
+        if (pos < (long)RATE * OGG_SECONDS) {
+            float **buf = vorbis_analysis_buffer(&vd, 1024);
+
+            for (int i = 0; i < 1024; i++)
+                buf[0][i] = buf[1][i] = tone(pos + i, RATE);
+            vorbis_analysis_wrote(&vd, 1024);
+            pos += 1024;
+        } else {
+            vorbis_analysis_wrote(&vd, 0);
+            done = 1;
+        }
+        while (vorbis_analysis_blockout(&vd, &vb) == 1) {
+            vorbis_analysis(&vb, NULL);
+            vorbis_bitrate_addblock(&vb);
+            while (vorbis_bitrate_flushpacket(&vd, &op))
+                ogg_put(&os, file, &op, op.e_o_s);
+        }
+    }
+    ogg_stream_clear(&os);
+    vorbis_block_clear(&vb);
+    vorbis_dsp_clear(&vd);
+    vorbis_comment_clear(&vc);
+    vorbis_info_clear(&vi);
+}
+
+static void
+make_ogg_opus(bytes *file)
+{
+    enum { FRAME = 960, PRESKIP = 312 };
+    static const unsigned char tags[] = { 'O', 'p', 'u', 's', 'T', 'a', 'g', 's', 0, 0, 0, 0, 0, 0, 0, 0 };
+    unsigned char head[19] = { 'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 1, 2, PRESKIP & 255, PRESKIP >> 8,
+                               0x80, 0xBB, 0, 0, 0, 0, 0 }; /* 48000 Hz, gain 0, family 0 */
+    int err;
+    OpusEncoder *enc = opus_encoder_create(48000, 2, OPUS_APPLICATION_AUDIO, &err);
+    ogg_stream_state os;
+    ogg_packet op;
+    long total = 48000L * OGG_SECONDS, frames = total / FRAME;
+    static float pcm[FRAME * 2];
+    unsigned char out[1500];
+
+    ogg_stream_init(&os, 99);
+    memset(&op, 0, sizeof op);
+    op.packet = head;
+    op.bytes = sizeof head;
+    op.b_o_s = 1;
+    ogg_put(&os, file, &op, 1);
+    op.packet = (unsigned char *)tags;
+    op.bytes = sizeof tags;
+    op.b_o_s = 0;
+    op.packetno = 1;
+    ogg_put(&os, file, &op, 1);
+    for (long f = 0; f < frames; f++) {
+        for (size_t i = 0; i < FRAME; i++)
+            pcm[2 * i] = pcm[2 * i + 1] = tone(f * FRAME + (long)i, 48000);
+        op.bytes = opus_encode_float(enc, pcm, FRAME, out, sizeof out);
+        op.packet = out;
+        op.packetno = 2 + f;
+        op.granulepos = (f + 1) * FRAME + PRESKIP;
+        op.e_o_s = f == frames - 1;
+        ogg_put(&os, file, &op, op.e_o_s);
+    }
+    ogg_stream_clear(&os);
+    opus_encoder_destroy(enc);
+}
+
+static void
+make_ogg_flac(bytes *file)
+{
+    enum { N = RATE * OGG_SECONDS };
+    static FLAC__int32 ch[N];
+    const FLAC__int32 *chans[2] = { ch, ch };
+    FLAC__StreamEncoder *enc = FLAC__stream_encoder_new();
+
+    for (int i = 0; i < N; i++)
+        ch[i] = (FLAC__int32)(tone(i, RATE) * 32767);
+    FLAC__stream_encoder_set_channels(enc, 2);
+    FLAC__stream_encoder_set_bits_per_sample(enc, 16);
+    FLAC__stream_encoder_set_sample_rate(enc, RATE);
+    FLAC__stream_encoder_set_total_samples_estimate(enc, N);
+    FLAC__stream_encoder_init_ogg_stream(enc, NULL, flac_write, NULL, NULL, NULL, file);
+    FLAC__stream_encoder_process(enc, chans, N);
+    FLAC__stream_encoder_finish(enc);
+    FLAC__stream_encoder_delete(enc);
+}
+
+TEST
+ogg_round_trip(papaya_codec codec)
+{
+    bytes file = { NULL, 0 };
+    int rate = codec == PAPAYA_CODEC_OPUS ? 48000 : RATE;
+    papaya_demuxer *dm;
+    const papaya_stream_info *s;
+    papaya_frame_pool *pool;
+    papaya_decoder *d;
+    papaya_packet *p;
+    papaya_frame *f;
+    long samples = 0, crossings = 0;
+    float last = 0;
+    int64_t first_pts = PAPAYA_NOPTS;
+
+    if (codec == PAPAYA_CODEC_VORBIS)
+        make_ogg_vorbis(&file);
+    else if (codec == PAPAYA_CODEC_OPUS)
+        make_ogg_opus(&file);
+    else
+        make_ogg_flac(&file);
+    ASSERT(file.size > 1000);
+    dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
+    ASSERT(dm != NULL);
+    ASSERT_STR_EQ("ogg", papaya_demux_name(dm));
+    ASSERT_EQ(1, papaya_demux_stream_count(dm));
+    s = papaya_demux_stream(dm, 0);
+    ASSERT_EQ(codec, s->codec);
+    ASSERT_EQ(rate, s->sample_rate);
+    ASSERT_EQ(2, s->channels);
+    /* The length is the last granule: the real samples, gapless. */
+    ASSERT(labs((long)(papaya_demux_duration(dm) - OGG_SECONDS * 1000000LL)) < 30000);
+    pool = papaya_frame_pool_new();
+    d = papaya_decoder_open(s, pool);
+    ASSERT(d != NULL);
+    while (papaya_demux_read(dm, &p) == 0) {
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            const float *x = (const float *)f->audio[0];
+
+            if (first_pts == PAPAYA_NOPTS)
+                first_pts = f->pts;
+            for (size_t i = 0; i < (size_t)f->samples; i++) {
+                if ((x[2 * i] >= 0) != (last >= 0))
+                    crossings++;
+                last = x[2 * i];
+            }
+            samples += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    ASSERT_EQ(0, (int)first_pts);
+    ASSERT(labs(samples - (long)rate * OGG_SECONDS) < 4096);
+    ASSERT(crossings > 880 * OGG_SECONDS - 40 && crossings < 880 * OGG_SECONDS + 40); /* 440 Hz */
+    /* A seek: the first packet's time is at or before the target, close. */
+    papaya_decoder_flush(d);
+    ASSERT_EQ(0, papaya_demux_seek(dm, 2500000));
+    for (;;) {
+        ASSERT_EQ(0, papaya_demux_read(dm, &p));
+        if (p->pts != PAPAYA_NOPTS)
+            break;
+        papaya_packet_free(&p);
+    }
+    ASSERT(p->pts <= 2500000 && p->pts > 2500000 - 1500000); /* within a page or two */
+    papaya_packet_free(&p);
+    ASSERT_EQ(0, papaya_demux_seek(dm, 0));
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT_EQ(0, (int)p->pts);
+    papaya_packet_free(&p);
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    for (size_t cut = 4; cut < file.size; cut += 3001) {
+        papaya_demuxer *t = papaya_demux_open(papaya_io_open_memory(file.data, cut));
+
+        while (t && papaya_demux_read(t, &p) == 0)
+            papaya_packet_free(&p);
+        papaya_demux_close(&t);
+    }
+    free(file.data);
+    PASS();
+}
+
 SUITE(music)
 {
     RUN_TEST(wav_layouts);
@@ -538,6 +754,9 @@ SUITE(music)
     RUN_TEST1(adts_round_trip, 5); /* HE-AAC */
     RUN_TEST1(flac_round_trip, 16);
     RUN_TEST1(flac_round_trip, 24);
+    RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_VORBIS);
+    RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_OPUS);
+    RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_FLAC);
 }
 
 GREATEST_MAIN_DEFS();
