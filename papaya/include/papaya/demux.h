@@ -31,6 +31,10 @@ typedef enum papaya_codec {
     PAPAYA_CODEC_EAC3,
     PAPAYA_CODEC_PCM_S16LE,
     PAPAYA_CODEC_PCM_F32LE,
+    PAPAYA_CODEC_PCM_U8,
+    PAPAYA_CODEC_PCM_S24LE,
+    PAPAYA_CODEC_PCM_S32LE,
+    PAPAYA_CODEC_PCM_F64LE,
 } papaya_codec;
 
 PAPAYA_EXPORT const char *papaya_codec_name(papaya_codec codec);

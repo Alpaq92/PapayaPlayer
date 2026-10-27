@@ -20,6 +20,15 @@ target_link_libraries(deps_test PRIVATE Ogg::ogg vorbis opus FLAC papaya_miniaud
 papaya_warnings(deps_test)
 add_test(NAME deps_test COMMAND deps_test)
 
+add_executable(music_test unit/music_test.c)
+target_include_directories(music_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_link_libraries(music_test PRIVATE papaya_core)
+if(UNIX)
+    target_link_libraries(music_test PRIVATE m)
+endif()
+papaya_warnings(music_test)
+add_test(NAME music_test COMMAND music_test)
+
 add_executable(demux_test unit/demux_test.c)
 target_include_directories(demux_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
 target_compile_definitions(demux_test PRIVATE

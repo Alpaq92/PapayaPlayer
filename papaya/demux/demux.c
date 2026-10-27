@@ -9,6 +9,7 @@ static const papaya_demux_backend *const backends[] = {
     &papaya_demux_webm,
     &papaya_demux_ivf,
     &papaya_demux_mp4,
+    &papaya_demux_wav,
 };
 
 struct papaya_demuxer {
@@ -37,6 +38,10 @@ static const char *const codec_names[] = {
     [PAPAYA_CODEC_EAC3] = "E-AC-3",
     [PAPAYA_CODEC_PCM_S16LE] = "PCM s16le",
     [PAPAYA_CODEC_PCM_F32LE] = "PCM f32le",
+    [PAPAYA_CODEC_PCM_U8] = "PCM u8",
+    [PAPAYA_CODEC_PCM_S24LE] = "PCM s24le",
+    [PAPAYA_CODEC_PCM_S32LE] = "PCM s32le",
+    [PAPAYA_CODEC_PCM_F64LE] = "PCM f64le",
 };
 
 const char *

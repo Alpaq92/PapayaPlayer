@@ -8,6 +8,7 @@ static const papaya_decode_backend *const backends[] = {
     &papaya_decode_vorbis,
     &papaya_decode_flac,
     &papaya_decode_aac,
+    &papaya_decode_pcm,
     &papaya_decode_dav1d,
     &papaya_decode_vpx,
     &papaya_decode_avc,

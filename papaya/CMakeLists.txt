@@ -14,11 +14,13 @@ add_library(papaya_core
     demux/demux.c
     demux/ivf/ivf.c
     demux/mp4/mp4.c
+    demux/wav/wav.c
     demux/webm/webm.cc
     decode/decode.c
     decode/sw/dav1d/dav1d.c
     decode/sw/flac/flac.c
     decode/sw/opus/opus.c
+    decode/sw/pcm/pcm.c
     decode/sw/vorbis/vorbis.c
     decode/sw/vpx/vpx.c
     decode/sw/ittiam/avc.c
