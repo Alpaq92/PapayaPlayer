@@ -590,7 +590,7 @@ make_ogg_vorbis(bytes *file)
             vorbis_analysis(&vb, NULL);
             vorbis_bitrate_addblock(&vb);
             while (vorbis_bitrate_flushpacket(&vd, &op))
-                ogg_put(&os, file, &op, op.e_o_s);
+                ogg_put(&os, file, &op, op.e_o_s != 0);
         }
     }
     ogg_stream_clear(&os);
@@ -634,7 +634,7 @@ make_ogg_opus(bytes *file)
         op.packetno = 2 + f;
         op.granulepos = (f + 1) * FRAME + PRESKIP;
         op.e_o_s = f == frames - 1;
-        ogg_put(&os, file, &op, op.e_o_s);
+        ogg_put(&os, file, &op, op.e_o_s != 0);
     }
     ogg_stream_clear(&os);
     opus_encoder_destroy(enc);
