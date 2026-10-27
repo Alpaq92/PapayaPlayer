@@ -12,6 +12,7 @@ static const papaya_demux_backend *const backends[] = {
     &papaya_demux_wav,
     &papaya_demux_mp3,
     &papaya_demux_adts,
+    &papaya_demux_flac,
 };
 
 struct papaya_demuxer {

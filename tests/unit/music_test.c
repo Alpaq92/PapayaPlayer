@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "FLAC/stream_encoder.h"
 #include "aac_encode.h"
 #include "greatest.h"
 #include "papaya/decode.h"
@@ -431,6 +432,101 @@ adts_round_trip(int aot)
     PASS();
 }
 
+/* ---- FLAC: libFLAC writes the file, every sample comes back ------------ */
+
+static FLAC__StreamEncoderWriteStatus
+flac_write(const FLAC__StreamEncoder *enc, const FLAC__byte data[], size_t size, uint32_t samples,
+           uint32_t frame, void *user)
+{
+    (void)enc;
+    (void)samples;
+    (void)frame;
+    append_unit(user, data, (int)size);
+    return FLAC__STREAM_ENCODER_WRITE_STATUS_OK;
+}
+
+static FLAC__int32
+flac_value(int i, int c, int bits)
+{
+    /* a sine with a little deterministic noise, so frames differ */
+    double v = 0.6 * sin(2 * 3.14159265358979 * 440 * i / RATE + c) + 0.05 * (double)((i * 7919 + c) % 101 - 50) / 50;
+
+    return (FLAC__int32)(v * (double)((1 << (bits - 1)) - 1));
+}
+
+TEST
+flac_round_trip(int bits)
+{
+    enum { N = 3 * RATE };
+    static FLAC__int32 left[N], right[N];
+    const FLAC__int32 *chans[2] = { left, right };
+    FLAC__StreamEncoder *enc = FLAC__stream_encoder_new();
+    bytes file = { NULL, 0 };
+    papaya_demuxer *dm;
+    papaya_frame_pool *pool;
+    papaya_decoder *d;
+    papaya_packet *p;
+    papaya_frame *f;
+    long n = 0, wrong = 0;
+    double scale = 1.0 / (double)(1 << (bits - 1));
+
+    for (int i = 0; i < N; i++) {
+        left[i] = flac_value(i, 0, bits);
+        right[i] = flac_value(i, 1, bits);
+    }
+    FLAC__stream_encoder_set_channels(enc, 2);
+    FLAC__stream_encoder_set_bits_per_sample(enc, (uint32_t)bits);
+    FLAC__stream_encoder_set_sample_rate(enc, RATE);
+    FLAC__stream_encoder_set_total_samples_estimate(enc, N);
+    ASSERT_EQ(FLAC__STREAM_ENCODER_INIT_STATUS_OK,
+              FLAC__stream_encoder_init_stream(enc, flac_write, NULL, NULL, NULL, &file));
+    ASSERT(FLAC__stream_encoder_process(enc, chans, N));
+    ASSERT(FLAC__stream_encoder_finish(enc));
+    FLAC__stream_encoder_delete(enc);
+
+    dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
+    ASSERT(dm != NULL);
+    ASSERT_STR_EQ("flac", papaya_demux_name(dm));
+    ASSERT_EQ((int64_t)N * 1000000 / RATE, papaya_demux_duration(dm));
+    pool = papaya_frame_pool_new();
+    d = papaya_decoder_open(papaya_demux_stream(dm, 0), pool);
+    ASSERT(d != NULL);
+    while (papaya_demux_read(dm, &p) == 0) {
+        ASSERT_EQ_FMT((long long)n * 1000000 / RATE, (long long)p->pts, "%lld");
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            const float *s = (const float *)f->audio[0];
+
+            for (size_t i = 0; i < (size_t)f->samples; i++)
+                if (lround((double)s[2 * i] / scale) != left[(size_t)n + i]
+                    || lround((double)s[2 * i + 1] / scale) != right[(size_t)n + i])
+                    wrong++;
+            n += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    ASSERT_EQ(N, n);
+    ASSERT_EQ(0, wrong); /* lossless */
+    /* A seek lands on the frame holding the target. */
+    ASSERT_EQ(0, papaya_demux_seek(dm, 1500000));
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT(p->pts <= 1500000 && p->pts > 1500000 - (int64_t)4096 * 1000000 / RATE);
+    papaya_packet_free(&p);
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    for (size_t cut = 4; cut < file.size; cut += 4999) {
+        papaya_demuxer *t = papaya_demux_open(papaya_io_open_memory(file.data, cut));
+
+        while (t && papaya_demux_read(t, &p) == 0)
+            papaya_packet_free(&p);
+        papaya_demux_close(&t);
+    }
+    free(file.data);
+    PASS();
+}
+
 SUITE(music)
 {
     RUN_TEST(wav_layouts);
@@ -440,6 +536,8 @@ SUITE(music)
     RUN_TEST(mp3_duration_and_seek);
     RUN_TEST1(adts_round_trip, 2); /* AAC-LC */
     RUN_TEST1(adts_round_trip, 5); /* HE-AAC */
+    RUN_TEST1(flac_round_trip, 16);
+    RUN_TEST1(flac_round_trip, 24);
 }
 
 GREATEST_MAIN_DEFS();
