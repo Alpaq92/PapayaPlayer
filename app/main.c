@@ -568,7 +568,7 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .name = "volume", .value = &ui.volume, .lo = 0.0f, .hi = 1.0f, .step = 0.05f,
             .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f, .mr = 6.0f } });
         reaktor_button(&(reaktor_button_spec){
-            .icon = fullscreen() ? "contract-outline" : "scan-outline", .name = "fullscreen",
+            .icon = fullscreen() ? "fullscreen-exit" : "fullscreen-enter", .name = "fullscreen",
             .tooltip = fullscreen() ? "Exit full screen (F)" : "Full screen (F)", .keys = "F", .flat = 1,
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_fullscreen, NULL } });
         if (ui.volume != volume_before) {
@@ -927,6 +927,35 @@ stop(App *app)
 }
 
 /* Our additions to Reaktor's stylesheet. */
+/* Ionicons' arrow box icons say stroke="black", which Reaktor does not
+ * recolor; these copies say "#000". */
+static const char fullscreen_enter_svg[] =
+    "<svg width=\"512\" height=\"512\" viewBox=\"0 0 512 512\" fill=\"none\" xmlns=\"http://www"
+    ".w3.org/2000/svg\"><path d=\"M388.364 242.764V421.455C388.364 432.738 383.881 443.56 375.9"
+    "02 451.539C367.924 459.518 357.102 464 345.818 464H90.5455C79.2617 464 68.4401 459.518 60."
+    "4613 451.539C52.4825 443.56 48 432.738 48 421.455V166.182C48 154.898 52.4825 144.076 60.46"
+    "13 136.098C68.4401 128.119 79.2617 123.636 90.5455 123.636H269.236\" stroke=\"#000\" strok"
+    "e-width=\"32\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M464 180.364L"
+    "464 48L331.636 48\" stroke=\"#000\" stroke-width=\"32\" stroke-linecap=\"round\" stroke-li"
+    "nejoin=\"round\"/><path d=\"M216 296L464 48\" stroke=\"#000\" stroke-width=\"32\" stroke-l"
+    "inecap=\"round\" stroke-linejoin=\"round\"/></svg>";
+
+static const char fullscreen_exit_svg[] =
+    "<svg width=\"512\" height=\"512\" viewBox=\"0 0 512 512\" fill=\"none\" xmlns=\"http://www"
+    ".w3.org/2000/svg\"><path d=\"M269.236 388.364L90.5454 388.364C79.2617 388.364 68.4401 383."
+    "881 60.4612 375.902C52.4824 367.924 48 357.102 48 345.818L48 90.5454C48 79.2617 52.4824 68"
+    ".4401 60.4613 60.4613C68.4401 52.4824 79.2617 48 90.5454 48L345.818 48C357.102 48 367.924 "
+    "52.4825 375.902 60.4613C383.881 68.4401 388.364 79.2617 388.364 90.5455L388.364 269.236\" "
+    "stroke=\"#000\" stroke-width=\"32\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><p"
+    "ath d=\"M331.636 464L464 464L464 331.636\" stroke=\"#000\" stroke-width=\"32\" stroke-line"
+    "cap=\"round\" stroke-linejoin=\"round\"/><path d=\"M216 216L464 464\" stroke=\"#000\" stro"
+    "ke-width=\"32\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
+
+static const reaktor_asset papaya_assets[] = {
+    { .name = "icons/fullscreen-enter.svg", .data = fullscreen_enter_svg, .size = sizeof fullscreen_enter_svg - 1 },
+    { .name = "icons/fullscreen-exit.svg", .data = fullscreen_exit_svg, .size = sizeof fullscreen_exit_svg - 1 },
+};
+
 static const char papaya_css[] =
     ".ghost { background-color: rgba(0, 0, 0, 0); color: #f2f2f2; border-radius: 0.5rem; padding: 8px 10px; }\n"
     ".ghost:hover { background-color: var(--button-hover); }\n"
@@ -963,5 +992,7 @@ main(int argc, char **argv)
         .stop        = stop,
         .file_opened = file_opened,
         .css         = { { .name = "papaya.css", .data = papaya_css, .size = sizeof papaya_css - 1 } },
-        .icon_dirs   = { PAPAYA_ICON_DIR } });
+        .icon_dirs   = { PAPAYA_ICON_DIR },
+        .assets      = papaya_assets,
+        .asset_count = (int)(sizeof papaya_assets / sizeof papaya_assets[0]) });
 }
