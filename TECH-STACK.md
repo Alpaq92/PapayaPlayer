@@ -162,8 +162,19 @@ Inspired by Playerjs templates (playerjs.com), built with Reaktor:
 - **Added:** previous / next file buttons in both video and audio layouts.
 - **Audio visualiser:** cava-style bars with themes (see below).
 
-Open: whether Reaktor's CSS supports gradients, outlined rounded bars and pill
-buttons (unverified), and which elements the final design takes from each template.
+Reaktor's CSS draws outlined rounded bars and pills, but has no gradients
+(spike S5).
+
+**Decided (2026-10-30)**, from the mockups in `design/mockups.html`:
+- **Controls style:** both video layouts, minimal and accent, switchable in settings.
+- **Audio:** the same control bar layout and order as video, so both feel like one
+  player; album art, title and the visualiser sit above it.
+- **Gradients:** Reaktor's CSS gains gradient support (a request to Reaktor), rather
+  than drawing them in our own widgets.
+- **Accent colour:** papaya orange, with a guava-pink to papaya gradient.
+- **Playlist:** a slide-out panel.
+- **Visualiser:** bars by default; the other styles and colour sources selectable.
+- **Settings:** a panel inside the main window, not a separate window.
 
 ### Visualiser: cavacore
 - **cava** (karlstav/cava): MIT, C, active (2026-10-23). Its processing engine
