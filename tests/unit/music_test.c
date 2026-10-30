@@ -663,9 +663,8 @@ mp3_cover(void)
         id3_header(&file, version, &tag);
         grow(&file, mp3, mp3_size);
         dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
-        if (!dm || strcmp(papaya_demux_name(dm), "mp3") != 0 || !cover_is(dm, "front"))
-            bad++;
-        else if (papaya_demux_read(dm, &p) != 0)
+        if (!dm || strcmp(papaya_demux_name(dm), "mp3") != 0 || !cover_is(dm, "front")
+            || papaya_demux_read(dm, &p) != 0)
             bad++;
         else
             papaya_packet_free(&p);

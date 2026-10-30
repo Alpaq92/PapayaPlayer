@@ -9,6 +9,7 @@
  *
  * Settings (the cog, right end of the control bar): native or custom title bar, and whether playback moves
  * on to the next file. */
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,8 +26,8 @@
 
 #define BAR_H 80.0f  /* the seek bar, then the buttons */
 #define SEEK_H 28.0f
-#define VIS_BANDS 48
-enum { VIS_BARS, VIS_BLOCKS, VIS_WAVE, VIS_OFF };
+#define VIS_BANDS 64
+enum { VIS_BARS, VIS_MIRROR, VIS_PEAKS, VIS_BLOCKS, VIS_WAVE, VIS_RADIAL, VIS_OFF, VIS_STYLES };
 enum { VIS_GRADIENT, VIS_ACCENT, VIS_HUE, VIS_ART };
 #define SEEK_MARGIN 20.0f /* the seek bar's distance from the bar's sides */
 #define ACCENT_INSET 14.0f  /* the accent bar's distance from the window edges */
@@ -75,6 +76,8 @@ static struct {
     int vis_colour;          /* VIS_GRADIENT ... VIS_ART */
     papaya_spectrum *vis;
     float vis_levels[VIS_BANDS];
+    float vis_peak[VIS_BANDS], vis_peak_fall[VIS_BANDS]; /* the Peaks style's caps */
+    int vis_full;            /* the visualiser fills the window behind the art */
     int64_t vis_at;          /* when the levels were last updated */
     int settings_tab;
     int settings_open;
@@ -919,7 +922,7 @@ set_titlebar(int custom)
     reaktor_settings_save();
 }
 
-static const char *const vis_styles[] = { "bars", "blocks", "wave", "off" };
+static const char *const vis_styles[] = { "bars", "mirror", "peaks", "blocks", "wave", "radial", "off" };
 static const char *const vis_colours[] = { "gradient", "accent", "hue", "art" };
 
 /* Which of names a setting holds, or fallback. */
@@ -946,7 +949,12 @@ load_settings(void)
 
         ui.accent_style = style && strcmp(style, "accent") == 0;
     }
-    ui.vis_style = setting_index("visualiser", vis_styles, 4, VIS_BARS);
+    ui.vis_style = setting_index("visualiser", vis_styles, VIS_STYLES, VIS_BARS);
+    {
+        const char *size = reaktor_setting("visualiser_size");
+
+        ui.vis_full = size && strcmp(size, "full") == 0;
+    }
     ui.vis_colour = setting_index("visualiser_colour", vis_colours, 4, VIS_GRADIENT);
     if (ui.custom_titlebar)
         reaktor_set_borderless(ui.app, 1);
@@ -954,6 +962,7 @@ load_settings(void)
 
 #define SETTINGS_W 380.0f
 #define SETTINGS_H 172.0f
+#define SETTINGS_VIS_H 316.0f /* the Visualiser tab has more rows */
 
 static const char *const settings_tabs[] = { "Playback", "Visualiser", "Window" };
 
@@ -1007,16 +1016,17 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
     float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
     float pw = w - 16.0f < SETTINGS_W ? w - 16.0f : SETTINGS_W;
-    static const char *const style_labels[] = { "Bars", "Blocks", "Wave", "Off" };
+    static const char *const style_labels[] = { "Bars", "Mirror", "Peaks", "Blocks", "Wave", "Radial", "Off" };
     static const char *const colour_labels[] = { "Gradient", "Accent", "Hue", "Art" };
     int titlebar = ui.custom_titlebar, style = ui.accent_style, vis = ui.vis_style, colour = ui.vis_colour;
+    int full = ui.vis_full;
     reaktor_bool next = ui.autoplay_next;
 
     if (left->clicked && left->down && !inside(ui.settings_rect, mx, my) && !inside(ui.cog_rect, mx, my)) {
         ui.settings_open = 0;
         return;
     }
-    ui.settings_rect = popup_above(ui.cog_rect, pw, SETTINGS_H, w, h);
+    ui.settings_rect = popup_above(ui.cog_rect, pw, ui.settings_tab == 1 ? SETTINGS_VIS_H : SETTINGS_H, w, h);
     reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 10.0f, reaktor_rgba(24, 22, 27, 240));
     REAKTOR_COLUMN(.w = pw - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = ui.settings_rect.y + 10.0f, .gap = 12.0f) {
         reaktor_tabs(&(reaktor_tabs_spec){
@@ -1033,13 +1043,27 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
                                                      .box = { .w = 32.0f, .h = 32.0f } });
             }
         } else if (ui.settings_tab == 1) {
-            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
-                setting_label("vis-heading", "Style", NULL);
-                vis = setting_choice("vis-style", style_labels, 4, vis, 64.0f);
+            setting_label("vis-heading", "Style", NULL);
+            /* seven choices in two rows; each row's buttons keep their own names */
+            REAKTOR_ROW(.h = 32.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                int row = setting_choice("vis-style", style_labels, 4, vis < 4 ? vis : -1, 82.0f);
+
+                if (row >= 0 && row != vis)
+                    vis = row;
+            }
+            REAKTOR_ROW(.h = 32.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                int row = setting_choice("vis-style-more", style_labels + 4, 3, vis >= 4 ? vis - 4 : -1, 82.0f);
+
+                if (row >= 0 && row + 4 != vis)
+                    vis = row + 4;
             }
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
                 setting_label("vis-colour-heading", "Colour", NULL);
                 colour = setting_choice("vis-colour", colour_labels, 4, colour, 64.0f);
+            }
+            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                setting_label("vis-size-heading", "Size", NULL);
+                full = setting_pair("vis-size-title", "Below title", "vis-size-full", "Window", full);
             }
         } else {
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
@@ -1058,6 +1082,11 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     if (vis != ui.vis_style) {
         ui.vis_style = vis;
         reaktor_setting_set("visualiser", vis_styles[vis]);
+        reaktor_settings_save();
+    }
+    if (full != ui.vis_full) {
+        ui.vis_full = full;
+        reaktor_setting_set("visualiser_size", full ? "full" : "title");
         reaktor_settings_save();
     }
     if (colour != ui.vis_colour) {
@@ -1165,8 +1194,8 @@ vis_colour_at(int i, float v)
     if (ui.vis_colour == VIS_ART && ui.cover) { /* the cover's colour, darker at the foot */
         float k = 0.45f + 0.55f * v;
 
-        return reaktor_rgba((unsigned char)(ui.art[0] * k), (unsigned char)(ui.art[1] * k),
-                            (unsigned char)(ui.art[2] * k), 255);
+        return reaktor_rgba((unsigned char)((float)ui.art[0] * k), (unsigned char)((float)ui.art[1] * k),
+                            (unsigned char)((float)ui.art[2] * k), 255);
     }
     if (ui.vis_colour == VIS_ACCENT || ui.vis_colour == VIS_ART)
         return reaktor_rgba(255, 122, 69, 255);
@@ -1187,6 +1216,38 @@ vis_colour_at(int i, float v)
     return reaktor_rgba(255, (unsigned char)(61.0f + 61.0f * v), (unsigned char)(110.0f - 41.0f * v), 255);
 }
 
+/* vis_colour_at, dimmed when the visualiser lies behind the art and title. */
+static struct nk_color
+vis_ink(int i, float v)
+{
+    struct nk_color c = vis_colour_at(i, v);
+
+    if (ui.vis_full)
+        c.a = 150;
+    return c;
+}
+
+/* A bar from the foot (y0) towards the tip (y1, above or below it), in band
+ * i's colours for level v. */
+static void
+vis_bar(struct nk_command_buffer *cv, float x, float bw, float y0, float y1, int i, float v)
+{
+    struct reaktor_rect bar = reaktor_rect(x, y1 < y0 ? y1 : y0, bw, y1 < y0 ? y0 - y1 : y1 - y0);
+
+    if (bar.h < 1.0f)
+        return;
+    if (ui.vis_colour == VIS_GRADIENT) { /* corners: top left, top right, bottom right, bottom left */
+        struct nk_color foot = vis_ink(i, 0.0f), tip = vis_ink(i, v);
+
+        if (y1 < y0)
+            nk_fill_rect_multi_color(cv, bar, tip, tip, foot, foot);
+        else
+            nk_fill_rect_multi_color(cv, bar, foot, foot, tip, tip);
+    } else {
+        reaktor_fill_rect(cv, bar, 2.0f, vis_ink(i, v));
+    }
+}
+
 /* The visualiser in r: the newest sound's levels, falling while paused. */
 static void
 draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
@@ -1195,6 +1256,7 @@ draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
     struct nk_command_buffer *cv = reaktor_window_get_canvas(ctx);
     int64_t now = papaya_time_us();
     float dt = ui.vis_at ? (float)(now - ui.vis_at) / 1e6f : 0.0f, step = r.w / (float)VIS_BANDS, rest = 0.0f;
+    float gap = step > 8.0f ? 3.0f : 1.0f, bottom = r.y + r.h;
     int rate = 0;
 
     if (!ui.vis)
@@ -1208,35 +1270,69 @@ draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
         rate = papaya_player_scope(ui.player, samples, PAPAYA_SPECTRUM_WINDOW);
     papaya_spectrum_update(ui.vis, rate ? samples : NULL, rate, dt, ui.vis_levels);
     for (int i = 0; i < VIS_BANDS; i++) {
-        float v = ui.vis_levels[i], bh = v * r.h, bx = r.x + (float)i * step;
+        float v = ui.vis_levels[i], bx = r.x + (float)i * step;
 
         rest += v;
-        if (ui.vis_style == VIS_BARS && bh >= 1.0f) {
-            struct reaktor_rect bar = reaktor_rect(bx + 1.0f, r.y + r.h - bh, step - 3.0f, bh);
+        switch (ui.vis_style) {
+        case VIS_BARS:
+            vis_bar(cv, bx, step - gap, bottom, bottom - v * r.h, i, v);
+            break;
+        case VIS_MIRROR: { /* up and down from the middle line */
+            float mid = r.y + r.h / 2.0f;
 
-            if (ui.vis_colour == VIS_GRADIENT) { /* corners: top left, top right, bottom right, bottom left */
-                struct nk_color foot = vis_colour_at(i, 0.0f), tip = vis_colour_at(i, v);
-
-                nk_fill_rect_multi_color(cv, bar, tip, tip, foot, foot);
+            vis_bar(cv, bx, step - gap, mid, mid - v * r.h / 2.0f, i, v);
+            vis_bar(cv, bx, step - gap, mid, mid + v * r.h / 2.0f, i, v);
+            break;
+        }
+        case VIS_PEAKS: { /* bars, and a cap that lingers at each peak */
+            if (v >= ui.vis_peak[i]) {
+                ui.vis_peak[i] = v;
+                ui.vis_peak_fall[i] = 0.0f;
             } else {
-                reaktor_fill_rect(cv, bar, 2.0f, vis_colour_at(i, v));
+                ui.vis_peak_fall[i] += 0.8f * dt;
+                ui.vis_peak[i] -= ui.vis_peak_fall[i] * dt;
+                if (ui.vis_peak[i] < v)
+                    ui.vis_peak[i] = v;
             }
-        } else if (ui.vis_style == VIS_BLOCKS) {
-            int lit = (int)(v * 16.0f + 0.5f);
-            float bk = r.h / 16.0f;
+            rest += ui.vis_peak[i];
+            vis_bar(cv, bx, step - gap, bottom, bottom - v * r.h * 0.94f, i, v);
+            if (ui.vis_peak[i] > 0.01f)
+                reaktor_fill_rect(cv, reaktor_rect(bx, bottom - ui.vis_peak[i] * r.h * 0.94f - 4.0f, step - gap, 3.0f),
+                                  1.0f, vis_ink(i, 1.0f));
+            break;
+        }
+        case VIS_BLOCKS: {
+            int rows = (int)(r.h / 9.0f), lit = (int)(v * (float)rows + 0.5f);
+            float bk = rows > 0 ? r.h / (float)rows : r.h;
 
-            for (int k = 0; k < 16; k++) {
-                struct nk_color c = k < lit ? vis_colour_at(i, (float)k / 15.0f)
-                                            : reaktor_rgba(255, 255, 255, 18); /* unlit blocks show faintly */
+            for (int k = 0; k < rows; k++) {
+                struct nk_color c = k < lit ? vis_ink(i, (float)k / (float)(rows - 1))
+                                            : reaktor_rgba(255, 255, 255, 14); /* unlit blocks show faintly */
 
-                reaktor_fill_rect(cv, reaktor_rect(bx + 1.0f, r.y + r.h - (float)(k + 1) * bk + 1.0f, step - 3.0f, bk - 2.0f),
+                reaktor_fill_rect(cv, reaktor_rect(bx, bottom - (float)(k + 1) * bk + 1.0f, step - gap, bk - 2.0f),
                                   1.0f, c);
             }
-        } else if (ui.vis_style == VIS_WAVE && i > 0) {
-            float pv = ui.vis_levels[i - 1];
+            break;
+        }
+        case VIS_WAVE:
+            if (i > 0) {
+                float pv = ui.vis_levels[i - 1];
 
-            reaktor_stroke_line(cv, bx - step / 2.0f, r.y + r.h - pv * r.h, bx + step / 2.0f, r.y + r.h - bh, 2.5f,
-                                vis_colour_at(i, v));
+                reaktor_stroke_line(cv, bx - step / 2.0f, bottom - pv * r.h, bx + step / 2.0f, bottom - v * r.h, 3.0f,
+                                    vis_ink(i, v));
+            }
+            break;
+        case VIS_RADIAL: { /* spokes round a circle, the lowest band at the top */
+            float cx = r.x + r.w / 2.0f, cy = r.y + r.h / 2.0f, room = (r.w < r.h ? r.w : r.h) / 2.0f;
+            float r0 = room * 0.35f, a = (float)i / (float)VIS_BANDS * 6.2831853f - 1.5707963f;
+            float ca = cosf(a), sa = sinf(a), len = r0 + 2.0f + v * (room - r0);
+
+            reaktor_stroke_line(cv, cx + ca * r0, cy + sa * r0, cx + ca * len, cy + sa * len,
+                                2.0f * 3.14159f * r0 / (float)VIS_BANDS * 0.6f, vis_ink(i, v));
+            break;
+        }
+        default:
+            break;
         }
     }
     /* paused, but the bars are still falling: draw again */
@@ -1244,18 +1340,39 @@ draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
         reaktor_wake(ui.app);
 }
 
-/* A file with no picture: its cover art (or a papaya square), name and
- * visualiser where the video would be. */
+/* With no cover: a dark tile with a note on it. */
+static void
+draw_placeholder(struct reaktor_context *ctx, struct reaktor_rect r)
+{
+    int px = (int)(r.w * 0.38f);
+
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), r, 14.0f, reaktor_rgba(34, 30, 38, 255));
+    reaktor_glyph_at(ui.app, ctx, r, "musical-notes", reaktor_rgba(255, 122, 69, 200), px, 0.0f);
+}
+
+/* A file with no picture: its cover art (or a placeholder), name and the
+ * visualiser, across the width; below the art, or filling the window
+ * behind it. */
 static void
 draw_music(struct reaktor_context *ctx, float w, float h)
 {
-    float art = h * 0.32f < 220.0f ? h * 0.32f : 220.0f, top = (h - BAR_H - art) / 2.0f, x = 48.0f;
-    float tx = x + art + 24.0f, tw = w - tx - 48.0f;
+    float bar_top = panel_bottom(h), x = 48.0f, room = bar_top - TOP_H;
+    float art = room * 0.3f < 200.0f ? room * 0.3f : 200.0f, top, tx = x + art + 24.0f, tw = w - tx - 48.0f;
     const char *name = ui.list.current >= 0 ? ui.list.files[ui.list.current] : ui.title;
-    int vis = ui.vis_style != VIS_OFF && tw > 80.0f;
+    int vis = ui.vis_style != VIS_OFF && w > 200.0f;
+    struct reaktor_rect area;
 
-    if (top < TOP_H + 8.0f)
-        top = TOP_H + 8.0f;
+    if (art < 64.0f)
+        art = 64.0f;
+    if (!vis || ui.vis_full) { /* the art and names centred in the height */
+        top = TOP_H + (room - art) / 2.0f;
+        area = reaktor_rect(x, TOP_H + 16.0f, w - 2.0f * x, bar_top - TOP_H - 40.0f);
+    } else { /* the art and names at the top, the visualiser under them */
+        top = TOP_H + 24.0f;
+        area = reaktor_rect(x, top + art + 32.0f, w - 2.0f * x, bar_top - 24.0f - (top + art + 32.0f));
+    }
+    if (vis && area.h > 24.0f)
+        draw_visualiser(ctx, area);
     if (ui.cover && ui.cover_w > 0 && ui.cover_h > 0) {
         /* the middle square of the picture */
         int side = ui.cover_w < ui.cover_h ? ui.cover_w : ui.cover_h;
@@ -1271,21 +1388,14 @@ draw_music(struct reaktor_context *ctx, float w, float h)
         reaktor_draw_image(reaktor_window_get_canvas(ctx), reaktor_rect(x, top, art, art), &im,
                            reaktor_rgb(255, 255, 255));
     } else {
-        reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x, top, art, art), 14.0f,
-                          reaktor_rgba(255, 122, 69, 255));
-        reaktor_fill_rect(reaktor_window_get_canvas(ctx),
-                          reaktor_rect(x + art * 0.3f, top + art * 0.3f, art * 0.4f, art * 0.4f), art * 0.2f,
-                          reaktor_rgba(255, 61, 110, 255));
+        draw_placeholder(ctx, reaktor_rect(x, top, art, art));
     }
-    /* the names centred beside the art, or at its top above the visualiser */
-    REAKTOR_COLUMN(.w = tw, .ml = tx, .mt = vis ? top + 4.0f : top + art / 2.0f - 30.0f, .gap = 4.0f) {
+    REAKTOR_COLUMN(.w = tw, .ml = tx, .mt = top + art / 2.0f - 30.0f, .gap = 4.0f) {
         reaktor_label(&(reaktor_label_spec){ .text = ui.list.count ? ui.list.name : "", .color = "--text-muted",
                                              .box = { .h = 22.0f, .flags = REAKTOR_LAY_FILL_X } });
         reaktor_label(&(reaktor_label_spec){ .text = name, .name = "track-title", .color = "#f2f2f2",
                                              .style = ".track-title", .box = { .h = 34.0f, .flags = REAKTOR_LAY_FILL_X } });
     }
-    if (vis)
-        draw_visualiser(ctx, reaktor_rect(tx, top + 76.0f, tw < 720.0f ? tw : 720.0f, art - 76.0f));
 }
 
 /* The top bar: the folder (open file / folder, recent folders) and the file

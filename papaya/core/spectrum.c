@@ -7,6 +7,7 @@
 #define LOW_HZ 50.0f
 #define HIGH_HZ 16000.0f
 #define FLOOR_DB (-70.0f)
+#define TILT_DB 3.0f /* per octave from 1 kHz: music's highs are quieter */
 #define GRAVITY 6.0f /* how fast a falling band speeds up, levels per second squared */
 
 struct papaya_spectrum {
@@ -15,6 +16,7 @@ struct papaya_spectrum {
     float re[N], im[N];
     float level[PAPAYA_SPECTRUM_MAX_BANDS];
     float fall[PAPAYA_SPECTRUM_MAX_BANDS]; /* each band's falling speed */
+    float sens;            /* auto-sensitivity: quiet music still reaches the top */
 };
 
 papaya_spectrum *
@@ -29,6 +31,7 @@ papaya_spectrum_new(int bands)
     if (!s)
         return NULL;
     s->bands = bands;
+    s->sens = 1.0f;
     for (int i = 0; i < N; i++)
         s->window[i] = 0.5f - 0.5f * cosf(2.0f * pi * (float)i / (float)(N - 1)); /* Hann */
     return s;
@@ -84,7 +87,7 @@ fft(float *re, float *im)
 void
 papaya_spectrum_update(papaya_spectrum *s, const float *samples, int rate, float dt, float *levels)
 {
-    float high = HIGH_HZ, bin_hz, ratio;
+    float high = HIGH_HZ, bin_hz, ratio, loudest = 0.0f;
 
     if (rate <= 0)
         rate = 48000;
@@ -118,8 +121,11 @@ papaya_spectrum_update(papaya_spectrum *s, const float *samples, int rate, float
                     peak = p;
             }
             /* A full-scale sine gives N / 4 through the Hann window: 0 dB. */
-            db = 10.0f * log10f(peak / ((float)N * (float)N / 16.0f) + 1e-12f);
-            target = (db - FLOOR_DB) / -FLOOR_DB;
+            db = 10.0f * log10f(peak / ((float)N * (float)N / 16.0f) + 1e-12f)
+                 + TILT_DB * log2f(sqrtf(lo * hi) / 1000.0f);
+            target = (db - FLOOR_DB) / -FLOOR_DB * s->sens;
+            if (target > loudest)
+                loudest = target;
             if (target < 0.0f)
                 target = 0.0f;
             if (target > 1.0f)
@@ -136,4 +142,10 @@ papaya_spectrum_update(papaya_spectrum *s, const float *samples, int rate, float
         }
         levels[b] = s->level[b];
     }
+    /* As cava does: less when a band overshoots, slowly more while all stay
+     * low; only while there is sound, so silence does not wind it up. */
+    if (samples && loudest > 1.0f)
+        s->sens *= 1.0f - 0.5f * dt;
+    else if (samples && loudest > 0.05f && loudest < 0.8f && s->sens < 2.0f)
+        s->sens *= 1.0f + 0.25f * dt;
 }

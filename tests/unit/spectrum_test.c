@@ -41,9 +41,12 @@ sine_lands_in_its_band(void)
     ASSERT(levels[want] > 0.9f);       /* full scale is near 0 dB */
     ASSERT(levels[0] < 0.3f);          /* far from it, little leaks */
     ASSERT(levels[BANDS - 1] < 0.3f);
+    papaya_spectrum_free(&s);
+    s = papaya_spectrum_new(BANDS); /* a fresh one: the 1 kHz band is still falling */
     sine(100.0f, 1.0f);
     papaya_spectrum_update(s, wave, 48000, 1.0f / 60.0f, levels);
     ASSERT(loudest(levels) < want);
+    ASSERT(levels[loudest(levels)] > 0.75f); /* 3.3 octaves down: tilted 10 dB */
     papaya_spectrum_free(&s);
     ASSERT(s == NULL);
     PASS();

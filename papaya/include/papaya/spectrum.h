@@ -3,8 +3,10 @@
 
 /* The visualiser's analysis: the newest audio, windowed and transformed,
  * gathered into bands spaced evenly in pitch from 50 Hz up, each a level from
- * 0 to 1 (-70 dB to 0 dB of full scale). Levels jump up at once and fall
- * back with gravity, as cava's do. Drawing them is the app's. */
+ * 0 to 1 (-70 dB to 0 dB of full scale, tilted up 3 dB an octave above 1 kHz
+ * and down below it, so that music's spectrum lies about level). Levels jump up at once and fall
+ * back with gravity, and their scale follows the music's loudness, as cava's
+ * do. Drawing them is the app's. */
 
 #include "papaya/export.h"
 
