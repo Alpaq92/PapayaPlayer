@@ -23,6 +23,7 @@
 
 #define BAR_H 80.0f  /* the seek bar, then the buttons */
 #define SEEK_H 28.0f
+#define ACCENT_INSET 14.0f  /* the accent bar's distance from the window edges */
 #define TOP_H 52.0f
 
 #ifndef PAPAYA_ICON_DIR
@@ -58,6 +59,8 @@ static struct {
     /* settings, kept in Reaktor's settings file */
     int custom_titlebar;     /* borderless window, the top bar is the title bar */
     reaktor_bool autoplay_next;
+    int accent_style;        /* controls: 0 minimal, 1 accent (a floating, outlined bar) */
+    int settings_tab;
     int settings_open;
     struct reaktor_rect settings_rect, cog_rect;
     struct reaktor_rect drag_rect;  /* the top bar's empty middle, for the hit test */
@@ -585,7 +588,11 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
 {
     char now[32], total[32], times[80];
     int playing = ui.player && !papaya_player_paused(ui.player);
-    float before = ui.seek_value, volume_before = ui.volume, y = h - BAR_H;
+    float before = ui.seek_value, volume_before = ui.volume;
+    /* Minimal: across the bottom edge. Accent: a rounded, outlined bar
+     * floating above it (its gradients wait on Reaktor's CSS). */
+    float inset = ui.accent_style ? ACCENT_INSET : 0.0f, x = inset, bw = w - 2.0f * inset;
+    float y = h - BAR_H - inset;
     const char *sound = ui.muted || ui.volume <= 0.0f ? "volume-mute"
                         : ui.volume < 0.5f            ? "volume-low"
                                                       : "volume-high";
@@ -597,10 +604,17 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         snprintf(total, sizeof total, "--:--");
     snprintf(times, sizeof times, "%s / %s", now, total);
 
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0, y, w, BAR_H), 0,
-                      reaktor_rgba(0, 0, 0, 170));
+    if (ui.accent_style) {
+        struct reaktor_rect box = reaktor_rect(x, y, bw, BAR_H);
+
+        reaktor_fill_rect(reaktor_window_get_canvas(ctx), box, 14.0f, reaktor_rgba(15, 13, 17, 215));
+        nk_stroke_rect(reaktor_window_get_canvas(ctx), box, 14.0f, 1.0f, reaktor_rgba(255, 255, 255, 46));
+    } else {
+        reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0, y, w, BAR_H), 0,
+                          reaktor_rgba(0, 0, 0, 170));
+    }
     /* The seek bar across the whole width, the buttons under it. */
-    REAKTOR_ROW(.w = w - 16.0f, .h = SEEK_H, .ml = 8.0f, .mt = y + 4.0f) {
+    REAKTOR_ROW(.w = bw - 16.0f, .h = SEEK_H, .ml = x + 8.0f, .mt = y + 4.0f) {
         struct reaktor_rect track;
 
         if (reaktor_box_rect(&track))
@@ -614,7 +628,7 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
         touch();
     }
-    REAKTOR_ROW(.w = w - 16.0f, .h = 36.0f, .ml = 8.0f, .mt = y + 4.0f + SEEK_H, .gap = 6.0f) {
+    REAKTOR_ROW(.w = bw - 16.0f, .h = 36.0f, .ml = x + 8.0f, .mt = y + 4.0f + SEEK_H, .gap = 6.0f) {
         reaktor_button(&(reaktor_button_spec){
             .icon = playing ? "pause" : "play", .name = "play", .tooltip = playing ? "Pause" : "Play",
             .keys = "Space", .disabled = !ui.player, .flat = 1,
@@ -762,51 +776,96 @@ load_settings(void)
 
     ui.custom_titlebar = t && strcmp(t, "custom") == 0;
     ui.autoplay_next = !next || strcmp(next, "0") != 0;
+    {
+        const char *style = reaktor_setting("controls");
+
+        ui.accent_style = style && strcmp(style, "accent") == 0;
+    }
     if (ui.custom_titlebar)
         reaktor_set_borderless(ui.app, 1);
 }
 
-#define SETTINGS_W 280.0f
-#define SETTINGS_H 148.0f
+#define PANEL_MAX_W 440.0f
 
-/* The settings popup, above the cog; a click outside closes it. */
+static const char *const settings_tabs[] = { "Playback", "Window" };
+
+/* A setting's row: its name (and a line under it), then its control. */
+static void
+setting_label(const char *name, const char *text, const char *note)
+{
+    REAKTOR_COLUMN(.weight = 1.0f, .flags = REAKTOR_LAY_FILL_X) {
+        reaktor_label(&(reaktor_label_spec){ .text = text, .name = name, .color = "#f2f2f2", .box = { .h = 20.0f } });
+        if (note)
+            reaktor_label(&(reaktor_label_spec){ .text = note, .color = "--text-muted", .box = { .h = 18.0f } });
+    }
+}
+
+/* Two choices side by side; returns the one chosen. */
+static int
+setting_pair(const char *name_a, const char *a, const char *name_b, const char *b, int value)
+{
+    reaktor_bool on_a = value == 0, on_b = value != 0;
+
+    if (reaktor_select(&(reaktor_select_spec){ .label = a, .name = name_a, .on = &on_a, .centered = 1,
+                                              .box = { .w = 92.0f, .h = 32.0f } }))
+        value = 0;
+    if (reaktor_select(&(reaktor_select_spec){ .label = b, .name = name_b, .on = &on_b, .centered = 1,
+                                              .box = { .w = 92.0f, .h = 32.0f } }))
+        value = 1;
+    return value;
+}
+
+/* Settings: a full-height panel at the right, above the control bar so the
+ * options button still closes it; the video dims behind. A click outside
+ * closes it too, and so does Escape. */
 static void
 draw_settings(struct reaktor_context *ctx, float w, float h)
 {
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
-    float x = ctx->input.mouse.pos.x, y = ctx->input.mouse.pos.y;
-    int choice = ui.custom_titlebar;
+    float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
+    float pw = w * 0.62f < PANEL_MAX_W ? w * 0.62f : PANEL_MAX_W;
+    float bottom = h - BAR_H - (ui.accent_style ? ACCENT_INSET + 8.0f : 0.0f);
+    int titlebar = ui.custom_titlebar, style = ui.accent_style;
     reaktor_bool next = ui.autoplay_next;
 
-    if (left->clicked && left->down && !inside(ui.settings_rect, x, y) && !inside(ui.cog_rect, x, y)) {
+    if (left->clicked && left->down && !inside(ui.settings_rect, mx, my) && !inside(ui.cog_rect, mx, my)) {
         ui.settings_open = 0;
         return;
     }
-    ui.settings_rect = reaktor_rect(w - SETTINGS_W - 8.0f, h - BAR_H - 8.0f - SETTINGS_H, SETTINGS_W, SETTINGS_H);
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 10.0f, reaktor_rgba(24, 24, 24, 235));
-    REAKTOR_COLUMN(.w = SETTINGS_W - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = ui.settings_rect.y + 12.0f, .gap = 4.0f) {
-        reaktor_label(&(reaktor_label_spec){
-            .text = "Title bar", .name = "titlebar-heading", .color = "#9a9a9a", .box = { .h = 24.0f } });
-        REAKTOR_ROW(.h = 32.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
-            reaktor_bool native = !choice, custom = choice != 0;
-
-            if (reaktor_select(&(reaktor_select_spec){
-                    .label = "Native", .name = "titlebar-native", .on = &native, .centered = 1,
-                    .box = { .weight = 1.0f, .h = 32.0f, .flags = REAKTOR_LAY_FILL_X } }))
-                choice = 0;
-            if (reaktor_select(&(reaktor_select_spec){
-                    .label = "Custom", .name = "titlebar-custom", .on = &custom, .centered = 1,
-                    .box = { .weight = 1.0f, .h = 32.0f, .flags = REAKTOR_LAY_FILL_X } }))
-                choice = 1;
+    ui.settings_rect = reaktor_rect(w - pw, 0.0f, pw, bottom);
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0.0f, 0.0f, w - pw, bottom), 0.0f,
+                      reaktor_rgba(0, 0, 0, 140));
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 0.0f, reaktor_rgba(23, 21, 26, 248));
+    reaktor_stroke_line(reaktor_window_get_canvas(ctx), w - pw, 0.0f, w - pw, bottom, 1.0f,
+                        reaktor_rgba(58, 53, 63, 255));
+    REAKTOR_COLUMN(.w = pw - 32.0f, .ml = w - pw + 16.0f, .mt = 12.0f, .gap = 14.0f) {
+        reaktor_tabs(&(reaktor_tabs_spec){
+            .items = settings_tabs, .count = (int)(sizeof settings_tabs / sizeof settings_tabs[0]),
+            .chosen = &ui.settings_tab, .name = "Settings", .box = { .flags = REAKTOR_LAY_FILL_X } });
+        if (ui.settings_tab == 0) {
+            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                setting_label("controls-heading", "Controls style", "Across the bottom, or floating");
+                style = setting_pair("controls-minimal", "Minimal", "controls-accent", "Accent", style);
+            }
+            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                setting_label("next-heading", "Play the next file at the end", "Moves on through the folder");
+                reaktor_check(&(reaktor_check_spec){ .label = "", .name = "autoplay-next", .on = &next,
+                                                     .box = { .w = 32.0f, .h = 32.0f } });
+            }
+        } else {
+            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                setting_label("titlebar-heading", "Title bar", "The system's, or the top bar in its place");
+                titlebar = setting_pair("titlebar-native", "Native", "titlebar-custom", "Custom", titlebar);
+            }
         }
-        reaktor_label(&(reaktor_label_spec){
-            .text = "Playback", .name = "playback-heading", .color = "#9a9a9a", .box = { .h = 24.0f, .mt = 8.0f } });
-        reaktor_check(&(reaktor_check_spec){
-            .label = "Play the next file at the end", .name = "autoplay-next", .on = &next,
-            .box = { .h = 28.0f } });
     }
-    if (choice != ui.custom_titlebar)
-        set_titlebar(choice);
+    if (titlebar != ui.custom_titlebar)
+        set_titlebar(titlebar);
+    if (style != ui.accent_style) {
+        ui.accent_style = style;
+        reaktor_setting_set("controls", style ? "accent" : "minimal");
+        reaktor_settings_save();
+    }
     if (next != ui.autoplay_next) {
         ui.autoplay_next = next;
         reaktor_setting_set("autoplay_next", next ? "1" : "0");
