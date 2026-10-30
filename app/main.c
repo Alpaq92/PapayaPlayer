@@ -21,7 +21,8 @@
 #include "reaktor/main.h"
 #include "reaktor/reaktor.h"
 
-#define BAR_H 48.0f
+#define BAR_H 80.0f  /* the seek bar, then the buttons */
+#define SEEK_H 28.0f
 #define TOP_H 52.0f
 
 #ifndef PAPAYA_ICON_DIR
@@ -598,56 +599,58 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
 
     reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0, y, w, BAR_H), 0,
                       reaktor_rgba(0, 0, 0, 170));
-    REAKTOR_ROW(.w = w - 16.0f, .h = BAR_H, .ml = 8.0f, .mt = y, .gap = 6.0f) {
+    /* The seek bar across the whole width, the buttons under it. */
+    REAKTOR_ROW(.w = w - 16.0f, .h = SEEK_H, .ml = 8.0f, .mt = y + 4.0f) {
+        struct reaktor_rect track;
+
+        if (reaktor_box_rect(&track))
+            click_to_seek(ctx, track, duration);
+        reaktor_slider(&(reaktor_slider_spec){
+            .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
+            .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
+            .box = { .h = SEEK_H, .flags = REAKTOR_LAY_FILL_X } });
+    }
+    if (ui.player && duration > 0 && ui.seek_value != before) {
+        papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
+        touch();
+    }
+    REAKTOR_ROW(.w = w - 16.0f, .h = 36.0f, .ml = 8.0f, .mt = y + 4.0f + SEEK_H, .gap = 6.0f) {
         reaktor_button(&(reaktor_button_spec){
             .icon = playing ? "pause" : "play", .name = "play", .tooltip = playing ? "Pause" : "Play",
             .keys = "Space", .disabled = !ui.player, .flat = 1,
-            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_pause, NULL } });
+            .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_pause, NULL } });
+        reaktor_button(&(reaktor_button_spec){
+            .icon = "play-skip-back", .name = "prev", .tooltip = "Previous file", .keys = "P",
+            .disabled = ui.list.current <= 0, .flat = 1, .box = { .w = 36.0f, .h = 36.0f },
+            .on_press = { step_file, &step_prev } });
         reaktor_button(&(reaktor_button_spec){
             .label = "-10", .name = "back10", .tooltip = "Back 10 s", .keys = "J", .disabled = !ui.player,
-            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 8.5f },
+            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 2.5f },
             .on_press = { seek_button, &step_back10 } });
         reaktor_button(&(reaktor_button_spec){
             .label = "+10", .name = "fwd10", .tooltip = "Forward 10 s", .keys = "L", .disabled = !ui.player,
-            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 8.5f },
+            .style = ".ghost", .fit_content = 1, .box = { .h = 36.0f, .mt = 2.5f },
             .on_press = { seek_button, &step_fwd10 } });
-        reaktor_button(&(reaktor_button_spec){
-            .icon = "play-skip-back", .name = "prev", .tooltip = "Previous file", .keys = "P",
-            .disabled = ui.list.current <= 0, .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f },
-            .on_press = { step_file, &step_prev } });
         reaktor_button(&(reaktor_button_spec){
             .icon = "play-skip-forward", .name = "next", .tooltip = "Next file", .keys = "N",
             .disabled = ui.list.current < 0 || ui.list.current + 1 >= ui.list.count, .flat = 1,
-            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { step_file, &step_next } });
-        REAKTOR_ROW(.weight = 1.0f, .h = 36.0f, .mt = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
-            struct reaktor_rect track;
-
-            if (reaktor_box_rect(&track))
-                click_to_seek(ctx, track, duration);
-            reaktor_slider(&(reaktor_slider_spec){
-                .name = "seek", .value = &ui.seek_value, .lo = 0.0f,
-                .hi = duration > 0 ? (float)duration / 1e6f : 1.0f, .step = 0.1f,
-                .box = { .h = 36.0f, .flags = REAKTOR_LAY_FILL_X } });
-        }
-        if (ui.player && duration > 0 && ui.seek_value != before) {
-            papaya_player_seek(ui.player, (int64_t)(ui.seek_value * 1e6f));
-            touch();
-        }
+            .box = { .w = 36.0f, .h = 36.0f }, .on_press = { step_file, &step_next } });
         reaktor_label(&(reaktor_label_spec){
-            .text = times, .name = "time", .color = "#f2f2f2", .align = REAKTOR_TEXT_CENTERED,
-            .box = { .h = 36.0f, .mt = 6.0f, .ml = 6.0f } });
+            .text = times, .name = "time", .color = "#f2f2f2", .box = { .h = 36.0f, .ml = 6.0f } });
+        REAKTOR_ROW(.weight = 1.0f, .h = 36.0f, .flags = REAKTOR_LAY_FILL_X) {
+        }
         reaktor_button(&(reaktor_button_spec){
             .icon = sound, .name = "mute", .tooltip = ui.muted ? "Unmute (M)" : "Mute (M)", .keys = "M",
-            .flat = 1, .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_mute, NULL } });
+            .flat = 1, .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_mute, NULL } });
         reaktor_slider(&(reaktor_slider_spec){
             .name = "volume", .value = &ui.volume, .lo = 0.0f, .hi = 1.0f, .step = 0.05f,
-            .box = { .w = 90.0f, .h = 36.0f, .mt = 6.0f, .mr = 6.0f } });
+            .box = { .w = 90.0f, .h = 36.0f, .mr = 6.0f } });
         reaktor_button(&(reaktor_button_spec){
             .icon = fullscreen() ? "fullscreen-exit" : "fullscreen-enter", .name = "fullscreen",
             .tooltip = fullscreen() ? "Exit full screen (F)" : "Full screen (F)", .keys = "F", .flat = 1,
             /* narrower than the others: a flat icon's own margin is gap enough */
-            .box = { .w = 30.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_fullscreen, NULL } });
-        REAKTOR_ROW(.w = 30.0f, .h = 36.0f, .mt = 6.0f) {
+            .box = { .w = 30.0f, .h = 36.0f }, .on_press = { toggle_fullscreen, NULL } });
+        REAKTOR_ROW(.w = 30.0f, .h = 36.0f) {
             reaktor_box_rect(&ui.cog_rect);
             reaktor_button(&(reaktor_button_spec){
                 .icon = "options-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
@@ -1041,6 +1044,8 @@ static const reaktor_asset papaya_assets[] = {
 };
 
 static const char papaya_css[] =
+    /* Reaktor's accent (slider fills, focus, chosen items) comes from links. */
+    "a:link { color: #ff7a45; }\n"
     ".ghost { background-color: rgba(0, 0, 0, 0); color: #f2f2f2; border-radius: 0.5rem; padding: 8px 10px; }\n"
     ".ghost:hover { background-color: var(--button-hover); }\n"
     "select { background-color: rgba(40, 40, 40, 0.55); color: #f2f2f2; }\n";
