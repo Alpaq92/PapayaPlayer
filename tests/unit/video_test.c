@@ -15,8 +15,8 @@
 static void
 hash_frame(md5_ctx *m, const papaya_frame *f)
 {
-    int bytes = f->pix == PAPAYA_PIX_I420_10 ? 2 : 1;
-    int cw = f->pix == PAPAYA_PIX_I444 ? f->width : (f->width + 1) / 2;
+    int bytes = papaya_pix_bytes(f->pix);
+    int cw = f->pix == PAPAYA_PIX_I444 || f->pix == PAPAYA_PIX_I444_10 ? f->width : (f->width + 1) / 2;
     int ch = f->pix == PAPAYA_PIX_I420 || f->pix == PAPAYA_PIX_I420_10 ? (f->height + 1) / 2 : f->height;
 
     for (int y = 0; y < f->height; y++)
@@ -193,6 +193,26 @@ vp9_10bit_bit_exact(void)
     PASS();
 }
 
+/* Profiles 1 and 3: 4:2:2 and 4:4:4, 8 and 10 bits. */
+TEST
+vp9_422_444_bit_exact(void)
+{
+    static const char *const v[] = {
+        "vp91-2-04-yuv422.webm",
+        "vp91-2-04-yuv444.webm",
+        "vp93-2-20-10bit-yuv422.webm",
+        "vp93-2-20-10bit-yuv444.webm",
+    };
+
+    for (size_t i = 0; i < sizeof v / sizeof v[0]; i++) {
+        char path[1024];
+
+        snprintf(path, sizeof path, "%s%s", VPX_DATA, v[i]);
+        ASSERTm(v[i], check_per_frame(path) > 0);
+    }
+    PASS();
+}
+
 /* Where the next start code (00 00 01) begins at or after at, or size. */
 static size_t
 next_start(const uint8_t *p, size_t size, size_t at)
@@ -341,6 +361,10 @@ hevc_bit_exact(void)
         { "AMP_A_Samsung_7.bin", "93a5875d58072db5539c04e1e943ed9d", 17, 9 },    /* asymmetric partitions */
         { "PICSIZE_A_Bossen_1.bin", "910ff0e6b3739af0b4aba4f6aa6704f8", 10, 0 }, /* 1056x8440, tiles */
         { "WP_A_MAIN10_Toshiba_3.bit", "c48e853010a234786dc87790d053b03a", 256, 128 }, /* Main 10, weighted prediction */
+        /* RExt: 8-bit 4:4:4, 10-bit 4:2:2 and 4:4:4 */
+        { "GENERAL_8b_444_RExt_Sony_2.bit", "3ed16fed34c4ed3ad8fe31962fb77aac", 14, 0 },
+        { "GENERAL_10b_422_RExt_Sony_1.bit", "ea5dfb01c95bffb169cd78e549bd39ab", 2, 0 },
+        { "GENERAL_10b_444_RExt_Sony_2.bit", "079dd98d0cb2ab8fe26475a2e946fe53", 12, 0 },
     };
 
     for (size_t i = 0; i < sizeof v / sizeof v[0]; i++) {
@@ -363,6 +387,7 @@ SUITE(video)
     RUN_TEST(vp8_bit_exact);
     RUN_TEST(vp9_bit_exact);
     RUN_TEST(vp9_10bit_bit_exact);
+    RUN_TEST(vp9_422_444_bit_exact);
 }
 
 GREATEST_MAIN_DEFS();

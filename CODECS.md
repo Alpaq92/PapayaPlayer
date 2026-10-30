@@ -25,7 +25,7 @@ or through passthrough, and otherwise are reported as unsupported.
 | Codec | Library | License | Language | Notes |
 |---|---|---|---|---|
 | H.264 | **libavc** (Ittiam / Android) | Apache-2.0 | C | Interlaced (MBAFF) code present. No Windows build listed |
-| HEVC | **libhevc** (Ittiam / Android) | Apache-2.0 | C | Main, Main 10 (`u4_enable_hbd`), RExt up to 4:2:2. No Windows build listed |
+| HEVC | **libhevc** (Ittiam / Android) | Apache-2.0 | C | Main, Main 10 (`u4_enable_hbd`), RExt 4:2:2 / 4:4:4 at 8 and 10 bits (`u4_enable_yuv_formats`; checked against the RExt conformance streams). No Windows build listed |
 | HEVC (backup) | **hevc.js** (lid-labs) | MIT | C++17 | Main + Main 10, all 147 v1 conformance streams bit-exact. GCC/clang only, ignores SEI/VUI colour info |
 | AV1 | **dav1d** | BSD-2 | C + asm | Meson + NASM build |
 | VP8 / VP9 | **libvpx** | BSD-3 | C + asm | Own configure script |
@@ -135,7 +135,7 @@ in https://github.com/androidx/media.
 | **DTS-HD MA** (lossless part) | Play the DTS core, which every DTS-HD stream contains; passthrough for the lossless stream |
 | **ASF** container | Write our own from Microsoft's spec, with jchv/asf-rs (ISC) as a reference. **Legal check needed on the spec's license**. Until then Media Foundation on Windows, unsupported elsewhere |
 | ProRes RAW | VideoToolbox on macOS; unsupported elsewhere |
-| HEVC 4:4:4 | Hardware decoders where available |
+| HEVC 12-bit and above | Hardware decoders where available |
 | AC-4 | **Candidate:** oxideav-ac4 (Rust, MIT, 2026-09): its README says it decodes channel-based, immersive and A-JOC object streams to PCM. ⚠️ Check provenance. Until then OS decoders / passthrough |
 | MPEG-H 3D Audio | Fraunhofer mpeghdec and its Rust port `mpeghdec` use the FDK-style MPEG-H license (non-standard, like FDK-AAC): excluded. OS decoders where available |
 | Encrypted DVDs (CSS) | None: no permissive library exists (`oxideav-css` is referenced but doesn't exist), and decrypting is legally restricted. Unencrypted discs, ISOs and decrypted rips play (section 3b) |

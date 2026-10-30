@@ -62,21 +62,19 @@ to_frame(vpx_ctx *c, const vpx_image_t *img)
     switch (img->fmt & ~VPX_IMG_FMT_HIGHBITDEPTH) {
     case VPX_IMG_FMT_I420:
     case VPX_IMG_FMT_YV12:
-        if (hbd && img->bit_depth != 10)
-            return NULL;
         pix = hbd ? PAPAYA_PIX_I420_10 : PAPAYA_PIX_I420;
         break;
     case VPX_IMG_FMT_I422:
-        pix = PAPAYA_PIX_I422;
+        pix = hbd ? PAPAYA_PIX_I422_10 : PAPAYA_PIX_I422;
         break;
     case VPX_IMG_FMT_I444:
-        pix = PAPAYA_PIX_I444;
+        pix = hbd ? PAPAYA_PIX_I444_10 : PAPAYA_PIX_I444;
         break;
     default:
         return NULL;
     }
-    if (hbd && pix != PAPAYA_PIX_I420_10)
-        return NULL;
+    if (hbd && img->bit_depth != 10)
+        return NULL; /* 12-bit: no format for it yet */
     cw = (w + (int)img->x_chroma_shift) >> img->x_chroma_shift;
     ch = (h + (int)img->y_chroma_shift) >> img->y_chroma_shift;
     f = papaya_frame_get_video(c->pool, pix, w, h);

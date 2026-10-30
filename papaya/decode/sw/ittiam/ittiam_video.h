@@ -9,6 +9,9 @@
  *   ITT_STREAM_COLOR(c)   optional: fills c->color from the bitstream once its
  *                         headers are in (what the container left unspecified)
  *   ITT_PICTURE_COLOR(c, f) optional: per-picture colour metadata (SEI) into f
+ *   ITT_CHROMA_FORMAT(p, n) optional: the chroma_format_idc of the first SPS
+ *                           in Annex B data, or -1; the decoder is created again
+ *                           for 4:2:2 / 4:4:4 output
  * and the parameter-set parser itt_to_annexb_config for its configuration
  * record (avcC / hvcC).
  *
@@ -28,6 +31,7 @@ typedef struct {
     int header_done;
     int width, height;
     int sample_bytes;  /* 2 for 16-bit (high bit depth) output */
+    int chroma;        /* chroma_format_idc of the output: 1 4:2:0, 2 4:2:2, 3 4:4:4 */
     papaya_color color;
     uint8_t *out[3];   /* our copy of the decoded picture (share_disp_buf 0) */
     size_t out_size[3];
@@ -40,6 +44,8 @@ typedef struct {
 } itt_ctx;
 
 static void itt_close(void *ctx);
+static int itt_create(itt_ctx *c);
+static void itt_delete(itt_ctx *c);
 static int itt_config_nal(itt_ctx *c, const uint8_t *p, size_t n);
 static int itt_to_annexb_config(itt_ctx *c, const uint8_t *p, size_t n);
 
@@ -144,6 +150,18 @@ itt_headers(itt_ctx *c, const uint8_t *data, size_t size)
 {
     ITT_PREFIX(video_decode_op_t) op;
 
+#ifdef ITT_CHROMA_FORMAT
+    {
+        int cf = ITT_CHROMA_FORMAT(data, size);
+
+        if (cf >= 1 && cf <= 3 && cf != c->chroma) {
+            itt_delete(c);
+            c->chroma = cf;
+            if (itt_create(c) != 0)
+                return -1;
+        }
+    }
+#endif
     while (size > 0 && !c->header_done) {
         uint32_t used;
 
@@ -169,7 +187,8 @@ itt_headers(itt_ctx *c, const uint8_t *data, size_t size)
         size_t luma = (size_t)c->width * (size_t)c->height * (size_t)c->sample_bytes;
 
         c->out_size[0] = luma;
-        c->out_size[1] = c->out_size[2] = luma / 4 + (size_t)c->width * (size_t)c->sample_bytes;
+        c->out_size[1] = c->out_size[2] = (c->chroma == 3 ? luma : c->chroma == 2 ? luma / 2 : luma / 4)
+                                          + (size_t)c->width * (size_t)c->sample_bytes;
         for (int i = 0; i < 3; i++) {
             free(c->out[i]);
             c->out[i] = malloc(c->out_size[i]);
@@ -232,14 +251,17 @@ itt_picture(itt_ctx *c, const ivd_video_decode_op_t *op)
     const iv_yuv_buf_t *b = &op->s_disp_frm_buf;
     int w = (int)b->u4_y_wd, h = (int)b->u4_y_ht;
     size_t bytes = ITT_BIT_DEPTH(op) > 8 ? 2 : 1; /* 16-bit samples above 8 bits */
-    papaya_frame *f = papaya_frame_get_video(c->pool, bytes == 2 ? PAPAYA_PIX_I420_10 : PAPAYA_PIX_I420, w, h);
+    papaya_pixel_format pix = c->chroma == 3   ? (bytes == 2 ? PAPAYA_PIX_I444_10 : PAPAYA_PIX_I444)
+                              : c->chroma == 2 ? (bytes == 2 ? PAPAYA_PIX_I422_10 : PAPAYA_PIX_I422)
+                                               : (bytes == 2 ? PAPAYA_PIX_I420_10 : PAPAYA_PIX_I420);
+    papaya_frame *f = papaya_frame_get_video(c->pool, pix, w, h);
     const uint8_t *src[3] = { b->pv_y_buf, b->pv_u_buf, b->pv_v_buf };
     size_t stride[3] = { b->u4_y_strd * bytes, b->u4_u_strd * bytes, b->u4_v_strd * bytes };
 
     if (!f)
         return NULL;
     for (int p = 0; p < 3; p++) {
-        int pw = p ? (w + 1) / 2 : w, ph = p ? (h + 1) / 2 : h;
+        int pw = p && c->chroma != 3 ? (w + 1) / 2 : w, ph = p && c->chroma == 1 ? (h + 1) / 2 : h;
 
         for (int y = 0; y < ph; y++)
             memcpy(f->planes[p] + (size_t)y * (size_t)f->strides[p], src[p] + (size_t)y * stride[p],
@@ -256,11 +278,53 @@ itt_picture(itt_ctx *c, const ivd_video_decode_op_t *op)
     return f;
 }
 
-static void *
-itt_open(const papaya_stream_info *s, papaya_frame_pool *pool)
+/* A decoder instance for c->chroma, set up to parse headers. */
+static int
+itt_create(itt_ctx *c)
 {
     ITT_PREFIX(create_ip_t) ip;
     ITT_PREFIX(create_op_t) op;
+
+    memset(&ip, 0, sizeof ip);
+    memset(&op, 0, sizeof op);
+    ip.s_ivd_create_ip_t.e_cmd = IVD_CMD_CREATE;
+    ip.s_ivd_create_ip_t.u4_share_disp_buf = 0;
+    ip.s_ivd_create_ip_t.e_output_format = c->chroma == 3   ? IV_YUV_444P
+                                           : c->chroma == 2 ? IV_YUV_422P
+                                                            : IV_YUV_420P;
+    ip.s_ivd_create_ip_t.pf_aligned_alloc = itt_alloc;
+    ip.s_ivd_create_ip_t.pf_aligned_free = itt_free;
+    ip.s_ivd_create_ip_t.u4_size = sizeof ip;
+    op.s_ivd_create_op_t.u4_size = sizeof op;
+    ITT_CREATE_EXTRA(ip);
+    if (ITT_API(NULL, &ip, &op) != IV_SUCCESS)
+        return -1;
+    c->codec = op.s_ivd_create_op_t.pv_handle;
+    c->codec->pv_fxns = (void *)ITT_API;
+    c->codec->u4_size = sizeof(iv_obj_t);
+    return itt_setup(c);
+}
+
+static void
+itt_delete(itt_ctx *c)
+{
+    ivd_delete_ip_t ip;
+    ivd_delete_op_t op;
+
+    if (!c->codec)
+        return;
+    memset(&ip, 0, sizeof ip);
+    memset(&op, 0, sizeof op);
+    ip.e_cmd = IVD_CMD_DELETE;
+    ip.u4_size = sizeof ip;
+    op.u4_size = sizeof op;
+    ITT_API(c->codec, &ip, &op);
+    c->codec = NULL;
+}
+
+static void *
+itt_open(const papaya_stream_info *s, papaya_frame_pool *pool)
+{
     itt_ctx *c = calloc(1, sizeof *c);
 
     if (!c)
@@ -268,24 +332,12 @@ itt_open(const papaya_stream_info *s, papaya_frame_pool *pool)
     c->pool = pool;
     c->color = s->color;
     c->width = s->width;
-    memset(&ip, 0, sizeof ip);
-    memset(&op, 0, sizeof op);
-    ip.s_ivd_create_ip_t.e_cmd = IVD_CMD_CREATE;
-    ip.s_ivd_create_ip_t.u4_share_disp_buf = 0;
-    ip.s_ivd_create_ip_t.e_output_format = IV_YUV_420P;
-    ip.s_ivd_create_ip_t.pf_aligned_alloc = itt_alloc;
-    ip.s_ivd_create_ip_t.pf_aligned_free = itt_free;
-    ip.s_ivd_create_ip_t.u4_size = sizeof ip;
-    op.s_ivd_create_op_t.u4_size = sizeof op;
-    ITT_CREATE_EXTRA(ip);
-    if (ITT_API(NULL, &ip, &op) != IV_SUCCESS) {
-        free(c);
+    c->chroma = 1;
+    if (itt_create(c) != 0) {
+        itt_close(c);
         return NULL;
     }
-    c->codec = op.s_ivd_create_op_t.pv_handle;
-    c->codec->pv_fxns = (void *)ITT_API;
-    c->codec->u4_size = sizeof(iv_obj_t);
-    if (itt_setup(c) != 0 || itt_to_annexb_config(c, s->extradata, s->extradata_size) != 0
+    if (itt_to_annexb_config(c, s->extradata, s->extradata_size) != 0
         || (c->config_size && itt_headers(c, c->config, c->config_size) != 0)) {
         itt_close(c);
         return NULL;
@@ -300,7 +352,7 @@ itt_drain(itt_ctx *c, void (*emit)(void *, papaya_frame *), void *sink)
     ivd_ctl_flush_op_t fop;
     ITT_PREFIX(video_decode_op_t) op;
 
-    if (!c->header_done)
+    if (!c->header_done || !c->codec)
         return;
     memset(&ip, 0, sizeof ip);
     memset(&fop, 0, sizeof fop);
@@ -330,6 +382,8 @@ itt_decode(void *ctx, const papaya_packet *p, void (*emit)(void *, papaya_frame 
     size_t size;
     uint32_t ts;
 
+    if (!c->codec)
+        return -1; /* lost when created again for another chroma format */
     if (!p) {
         itt_drain(c, emit, sink);
         return 0;
@@ -382,17 +436,7 @@ itt_close(void *ctx)
 {
     itt_ctx *c = ctx;
 
-    if (c->codec) {
-        ivd_delete_ip_t ip;
-        ivd_delete_op_t op;
-
-        memset(&ip, 0, sizeof ip);
-        memset(&op, 0, sizeof op);
-        ip.e_cmd = IVD_CMD_DELETE;
-        ip.u4_size = sizeof ip;
-        op.u4_size = sizeof op;
-        ITT_API(c->codec, &ip, &op);
-    }
+    itt_delete(c);
     for (int i = 0; i < 3; i++)
         free(c->out[i]);
     free(c->annexb);

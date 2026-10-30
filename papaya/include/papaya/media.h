@@ -65,10 +65,22 @@ typedef enum papaya_pixel_format {
     PAPAYA_PIX_I420_10,   /* 10-bit 4:2:0 planar, 16-bit samples, low bits */
     PAPAYA_PIX_NV12,      /* 8-bit 4:2:0, interleaved UV */
     PAPAYA_PIX_P010,      /* 10-bit 4:2:0, interleaved UV, high bits */
-    PAPAYA_PIX_I422,
-    PAPAYA_PIX_I444,
+    PAPAYA_PIX_I422,      /* 8-bit 4:2:2 planar */
+    PAPAYA_PIX_I444,      /* 8-bit 4:4:4 planar */
     PAPAYA_PIX_HW,        /* hardware surface, see hw_handle */
+    PAPAYA_PIX_I422_10,   /* 10-bit 4:2:2 planar, 16-bit samples, low bits */
+    PAPAYA_PIX_I444_10,   /* 10-bit 4:4:4 planar, 16-bit samples, low bits */
 } papaya_pixel_format;
+
+/* Bytes per sample: 2 for the 10-bit formats, else 1. */
+static inline int
+papaya_pix_bytes(papaya_pixel_format pix)
+{
+    return pix == PAPAYA_PIX_I420_10 || pix == PAPAYA_PIX_P010 || pix == PAPAYA_PIX_I422_10
+                   || pix == PAPAYA_PIX_I444_10
+               ? 2
+               : 1;
+}
 
 typedef enum papaya_sample_format {
     PAPAYA_SAMPLE_NONE,

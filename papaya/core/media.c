@@ -236,7 +236,7 @@ papaya_frame_get_video(papaya_frame_pool *pool, papaya_pixel_format pix, int wid
 
     if (width <= 0 || height <= 0 || width > 16384 || height > 16384)
         return NULL;
-    bps = (pix == PAPAYA_PIX_I420_10 || pix == PAPAYA_PIX_P010) ? 2 : 1;
+    bps = (size_t)papaya_pix_bytes(pix);
     luma_stride = align_up((size_t)width * bps);
     switch (pix) {
     case PAPAYA_PIX_I420:
@@ -252,11 +252,13 @@ papaya_frame_get_video(papaya_frame_pool *pool, papaya_pixel_format pix, int wid
         chroma_planes = 1;
         break;
     case PAPAYA_PIX_I422:
-        chroma_stride = align_up((size_t)(width + 1) / 2);
+    case PAPAYA_PIX_I422_10:
+        chroma_stride = align_up((size_t)(width + 1) / 2 * bps);
         chroma_h = (size_t)height;
         chroma_planes = 2;
         break;
     case PAPAYA_PIX_I444:
+    case PAPAYA_PIX_I444_10:
         chroma_stride = luma_stride;
         chroma_h = (size_t)height;
         chroma_planes = 2;

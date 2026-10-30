@@ -62,20 +62,18 @@ to_frame(dav1d_ctx *c, const Dav1dPicture *p)
         ch = (h + 1) >> 1;
         break;
     case DAV1D_PIXEL_LAYOUT_I422:
-        if (hbd)
-            return NULL;
-        pix = PAPAYA_PIX_I422;
+        pix = hbd ? PAPAYA_PIX_I422_10 : PAPAYA_PIX_I422;
         cw = (w + 1) >> 1;
         ch = h;
         break;
     default:
-        if (hbd)
-            return NULL;
-        pix = PAPAYA_PIX_I444;
+        pix = hbd ? PAPAYA_PIX_I444_10 : PAPAYA_PIX_I444;
         cw = w;
         ch = h;
         break;
     }
+    if (p->p.bpc > 10)
+        return NULL; /* 12-bit: no format for it yet */
     f = papaya_frame_get_video(c->pool, pix, w, h);
     if (!f)
         return NULL;
