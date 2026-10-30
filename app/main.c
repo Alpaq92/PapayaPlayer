@@ -585,6 +585,7 @@ toggle_mute(void *user)
 static void toggle_settings(void *user);
 static void toggle_playlist(void *user);
 static float panel_bottom(float h);
+static struct reaktor_rect popup_above(struct reaktor_rect button, float pw, float ph, float w, float h);
 
 /* The control bar, over the bottom of the video. */
 static void
@@ -805,7 +806,8 @@ load_settings(void)
         reaktor_set_borderless(ui.app, 1);
 }
 
-#define PANEL_MAX_W 440.0f
+#define SETTINGS_W 380.0f
+#define SETTINGS_H 172.0f
 
 static const char *const settings_tabs[] = { "Playback", "Window" };
 
@@ -835,16 +837,14 @@ setting_pair(const char *name_a, const char *a, const char *name_b, const char *
     return value;
 }
 
-/* Settings: a full-height panel at the right, above the control bar so the
- * options button still closes it; the video dims behind. A click outside
- * closes it too, and so does Escape. */
+/* Settings: a floating box above the options button. A click outside, the
+ * button again or Escape closes it. */
 static void
 draw_settings(struct reaktor_context *ctx, float w, float h)
 {
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
     float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
-    float pw = w * 0.62f < PANEL_MAX_W ? w * 0.62f : PANEL_MAX_W;
-    float bottom = panel_bottom(h);
+    float pw = w - 16.0f < SETTINGS_W ? w - 16.0f : SETTINGS_W;
     int titlebar = ui.custom_titlebar, style = ui.accent_style;
     reaktor_bool next = ui.autoplay_next;
 
@@ -852,19 +852,15 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
         ui.settings_open = 0;
         return;
     }
-    ui.settings_rect = reaktor_rect(w - pw, 0.0f, pw, bottom);
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(0.0f, 0.0f, w - pw, bottom), 0.0f,
-                      reaktor_rgba(0, 0, 0, 140));
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 0.0f, reaktor_rgba(23, 21, 26, 248));
-    reaktor_stroke_line(reaktor_window_get_canvas(ctx), w - pw, 0.0f, w - pw, bottom, 1.0f,
-                        reaktor_rgba(58, 53, 63, 255));
-    REAKTOR_COLUMN(.w = pw - 32.0f, .ml = w - pw + 16.0f, .mt = 12.0f, .gap = 14.0f) {
+    ui.settings_rect = popup_above(ui.cog_rect, pw, SETTINGS_H, w, h);
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 10.0f, reaktor_rgba(24, 22, 27, 240));
+    REAKTOR_COLUMN(.w = pw - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = ui.settings_rect.y + 10.0f, .gap = 12.0f) {
         reaktor_tabs(&(reaktor_tabs_spec){
             .items = settings_tabs, .count = (int)(sizeof settings_tabs / sizeof settings_tabs[0]),
             .chosen = &ui.settings_tab, .name = "Settings", .box = { .flags = REAKTOR_LAY_FILL_X } });
         if (ui.settings_tab == 0) {
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
-                setting_label("controls-heading", "Controls style", "Across the bottom, or floating");
+                setting_label("controls-heading", "Controls style", "Bottom edge, or floating");
                 style = setting_pair("controls-minimal", "Minimal", "controls-accent", "Accent", style);
             }
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
@@ -894,11 +890,27 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     touch();
 }
 
-/* The bottom of the side panels: just above the control bar. */
+/* The top of the control bar. */
 static float
 panel_bottom(float h)
 {
-    return h - BAR_H - (ui.accent_style ? ACCENT_INSET + 8.0f : 0.0f);
+    return h - BAR_H - (ui.accent_style ? ACCENT_INSET : 0.0f);
+}
+
+/* A floating box pw x ph above a button of the control bar, its right edge
+ * at the button's, kept inside the window and below the top bar. */
+static struct reaktor_rect
+popup_above(struct reaktor_rect button, float pw, float ph, float w, float h)
+{
+    float x = button.x + button.w - pw, y = panel_bottom(h) - 8.0f - ph;
+
+    if (x > w - pw - 8.0f)
+        x = w - pw - 8.0f;
+    if (x < 8.0f)
+        x = 8.0f;
+    if (y < TOP_H + 8.0f)
+        y = TOP_H + 8.0f;
+    return reaktor_rect(x, y, pw, ph);
 }
 
 static const char *
@@ -914,8 +926,8 @@ playlist_cell(int row, int column, void *user)
     return ui.list.files[row];
 }
 
-/* The folder's files, sliding out at the right over the picture; a click
- * plays one. A click outside closes it, as does Escape. */
+/* The folder's files in a floating box above the list button; a click plays
+ * one. A click outside, the button again or Escape closes it. */
 static void
 draw_playlist(struct reaktor_context *ctx, float w, float h)
 {
@@ -923,24 +935,24 @@ draw_playlist(struct reaktor_context *ctx, float w, float h)
     static const float widths[] = { 0.12f, 0.88f };
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
     float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
-    float pw = w * 0.42f < 380.0f ? w * 0.42f : 380.0f, bottom = panel_bottom(h);
+    float pw = w - 16.0f < 380.0f ? w - 16.0f : 380.0f;
+    float room = panel_bottom(h) - 8.0f - (TOP_H + 8.0f); /* the most height there is */
+    float list_h = (float)(ui.list.count + 1) * 32.0f + 2.0f, ph;
     char heading[320];
     int chosen = ui.list.current;
-    float list_h = (float)(ui.list.count + 1) * 32.0f + 2.0f;
 
-    if (list_h > bottom - 56.0f)
-        list_h = bottom - 56.0f;
+    if (list_h > room - 56.0f)
+        list_h = room - 56.0f;
+    ph = (ui.list.count ? list_h : 0.0f) + 56.0f;
 
     if (left->clicked && left->down && !inside(ui.playlist_rect, mx, my) && !inside(ui.list_button_rect, mx, my)) {
         ui.playlist_open = 0;
         return;
     }
-    ui.playlist_rect = reaktor_rect(w - pw, 0.0f, pw, bottom);
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.playlist_rect, 0.0f, reaktor_rgba(23, 21, 26, 248));
-    reaktor_stroke_line(reaktor_window_get_canvas(ctx), w - pw, 0.0f, w - pw, bottom, 1.0f,
-                        reaktor_rgba(58, 53, 63, 255));
+    ui.playlist_rect = popup_above(ui.list_button_rect, pw, ph, w, h);
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.playlist_rect, 10.0f, reaktor_rgba(24, 22, 27, 240));
     snprintf(heading, sizeof heading, "%s", ui.list.count ? ui.list.name : "No folder open");
-    REAKTOR_COLUMN(.w = pw - 24.0f, .h = bottom - 24.0f, .ml = w - pw + 12.0f, .mt = 12.0f, .gap = 8.0f) {
+    REAKTOR_COLUMN(.w = pw - 24.0f, .ml = ui.playlist_rect.x + 12.0f, .mt = ui.playlist_rect.y + 12.0f, .gap = 8.0f) {
         REAKTOR_ROW(.h = 24.0f, .flags = REAKTOR_LAY_FILL_X) {
             reaktor_label(&(reaktor_label_spec){ .text = heading, .name = "playlist-heading", .color = "#f2f2f2",
                                                  .box = { .weight = 1.0f, .h = 24.0f, .flags = REAKTOR_LAY_FILL_X } });
@@ -1224,7 +1236,7 @@ static const char papaya_css[] =
     ".ghost:hover { background-color: var(--button-hover); }\n"
     ".track-title { font-size: 1.6rem; font-weight: 600; }\n"
     /* the playlist: rows on the panel's own colour, the header quiet */
-    ":root { --table: #232027; --table-bg: #17151a; --table-bg-alt: #1c1a20; }\n"
+    ":root { --table: #232027; --table-bg: #18161b; --table-bg-alt: #1d1b21; }\n"
     "select { background-color: rgba(40, 40, 40, 0.55); color: #f2f2f2; }\n";
 
 int

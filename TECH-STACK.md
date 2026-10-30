@@ -172,9 +172,11 @@ Reaktor's CSS draws outlined rounded bars and pills, but has no gradients
 - **Gradients:** Reaktor's CSS gains gradient support (a request to Reaktor), rather
   than drawing them in our own widgets.
 - **Accent colour:** papaya orange, with a guava-pink to papaya gradient.
-- **Playlist:** a slide-out panel.
+- **Playlist:** a floating box above its button in the control bar (first a slide-out
+  panel; changed back the same day).
 - **Visualiser:** bars by default; the other styles and colour sources selectable.
-- **Settings:** a panel inside the main window, not a separate window.
+- **Settings:** a floating box above the options button, as it was before phase 3;
+  so is every other popup (first a full-height panel; changed back the same day).
 
 ### Visualiser: cavacore
 - **cava** (karlstav/cava): MIT, C, active (2026-10-23). Its processing engine
