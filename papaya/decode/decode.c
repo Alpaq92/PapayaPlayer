@@ -21,6 +21,9 @@ static const papaya_decode_backend *const backends[] = {
 struct papaya_decoder {
     const papaya_decode_backend *backend;
     void *ctx;
+    papaya_stream_info stream;  /* for a restart on new extradata */
+    papaya_frame_pool *pool;
+    uint8_t *extradata;         /* ours, once a config packet replaced it */
     papaya_frame *pending[MAX_PENDING];
     int head, count;
     int draining, drained;
@@ -38,6 +41,8 @@ papaya_decoder_open(const papaya_stream_info *stream, papaya_frame_pool *pool)
         if (!d)
             return NULL;
         d->backend = backends[i];
+        d->stream = *stream;
+        d->pool = pool;
         d->ctx = backends[i]->open(stream, pool);
         if (d->ctx)
             return d;
@@ -66,7 +71,9 @@ papaya_decoder_close(papaya_decoder **pd)
     if (!d)
         return;
     drop_pending(d);
-    d->backend->close(d->ctx);
+    if (d->ctx)
+        d->backend->close(d->ctx);
+    free(d->extradata);
     free(d);
 }
 
@@ -89,6 +96,27 @@ emit(void *sink, papaya_frame *frame)
     d->count++;
 }
 
+/* New extradata: the frames still held come out, then a fresh backend. */
+static int
+restart_with(papaya_decoder *d, const papaya_packet *config)
+{
+    uint8_t *extra = malloc(config->size ? config->size : 1);
+
+    if (!extra)
+        return -1;
+    memcpy(extra, config->data, config->size);
+    if (d->ctx) {
+        d->backend->decode(d->ctx, NULL, emit, d);
+        d->backend->close(d->ctx);
+    }
+    free(d->extradata);
+    d->extradata = extra;
+    d->stream.extradata = extra;
+    d->stream.extradata_size = config->size;
+    d->ctx = d->backend->open(&d->stream, d->pool);
+    return d->ctx ? 0 : -1;
+}
+
 int
 papaya_decoder_send(papaya_decoder *d, const papaya_packet *packet)
 {
@@ -96,6 +124,10 @@ papaya_decoder_send(papaya_decoder *d, const papaya_packet *packet)
 
     if (d->draining)
         return PAPAYA_DECODE_EOF;
+    if (packet && (packet->flags & PAPAYA_PACKET_CONFIG))
+        return restart_with(d, packet) == 0 ? PAPAYA_DECODE_OK : PAPAYA_DECODE_ERROR;
+    if (!d->ctx)
+        return PAPAYA_DECODE_ERROR;
     if (!packet)
         d->draining = 1;
     r = d->backend->decode(d->ctx, packet, emit, d);
@@ -121,7 +153,7 @@ papaya_decoder_flush(papaya_decoder *d)
 {
     drop_pending(d);
     d->draining = d->drained = 0;
-    if (d->backend->flush)
+    if (d->ctx && d->backend->flush)
         d->backend->flush(d->ctx);
 }
 

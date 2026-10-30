@@ -673,7 +673,7 @@ tone(long i, int rate)
 }
 
 static void
-make_ogg_vorbis(bytes *file)
+make_ogg_vorbis(bytes *file, int serial)
 {
     vorbis_info vi;
     vorbis_comment vc;
@@ -687,7 +687,7 @@ make_ogg_vorbis(bytes *file)
     vorbis_comment_init(&vc);
     vorbis_analysis_init(&vd, &vi);
     vorbis_block_init(&vd, &vb);
-    ogg_stream_init(&os, 1234);
+    ogg_stream_init(&os, serial);
     vorbis_analysis_headerout(&vd, &vc, &hdr[0], &hdr[1], &hdr[2]);
     ogg_put(&os, file, &hdr[0], 1);
     ogg_put(&os, file, &hdr[1], 0);
@@ -719,7 +719,7 @@ make_ogg_vorbis(bytes *file)
 }
 
 static void
-make_ogg_opus(bytes *file)
+make_ogg_opus(bytes *file, int serial)
 {
     enum { FRAME = 960, PRESKIP = 312 };
     static const unsigned char tags[] = { 'O', 'p', 'u', 's', 'T', 'a', 'g', 's', 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -733,7 +733,7 @@ make_ogg_opus(bytes *file)
     static float pcm[FRAME * 2];
     unsigned char out[1500];
 
-    ogg_stream_init(&os, 99);
+    ogg_stream_init(&os, serial);
     memset(&op, 0, sizeof op);
     op.packet = head;
     op.bytes = sizeof head;
@@ -794,9 +794,9 @@ ogg_round_trip(papaya_codec codec)
     int64_t first_pts = PAPAYA_NOPTS;
 
     if (codec == PAPAYA_CODEC_VORBIS)
-        make_ogg_vorbis(&file);
+        make_ogg_vorbis(&file, 1234);
     else if (codec == PAPAYA_CODEC_OPUS)
-        make_ogg_opus(&file);
+        make_ogg_opus(&file, 99);
     else
         make_ogg_flac(&file);
     ASSERT(file.size > 1000);
@@ -862,6 +862,95 @@ ogg_round_trip(papaya_codec codec)
     PASS();
 }
 
+/* Three links back to back, each with its own serial and headers: they
+ * play as one stream, times running on, and a seek lands in the right link. */
+#define LINKS 3
+
+TEST
+ogg_chained(papaya_codec codec)
+{
+    bytes file = { NULL, 0 };
+    int rate = codec == PAPAYA_CODEC_OPUS ? 48000 : RATE, configs = 0;
+    papaya_demuxer *dm;
+    papaya_frame_pool *pool;
+    papaya_decoder *d;
+    papaya_packet *p;
+    papaya_frame *f;
+    long samples = 0, crossings = 0;
+    float last = 0;
+    int64_t total = (int64_t)LINKS * OGG_SECONDS * 1000000;
+
+    for (int i = 0; i < LINKS; i++) {
+        if (codec == PAPAYA_CODEC_VORBIS)
+            make_ogg_vorbis(&file, 500 + i);
+        else
+            make_ogg_opus(&file, 500 + i);
+    }
+    dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
+    ASSERT(dm != NULL);
+    ASSERT_EQ(1, papaya_demux_stream_count(dm));
+    ASSERT(labs((long)(papaya_demux_duration(dm) - total)) < 30000 * LINKS);
+    pool = papaya_frame_pool_new();
+    d = papaya_decoder_open(papaya_demux_stream(dm, 0), pool);
+    ASSERT(d != NULL);
+    while (papaya_demux_read(dm, &p) == 0) {
+        configs += (p->flags & PAPAYA_PACKET_CONFIG) != 0;
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            const float *x = (const float *)f->audio[0];
+
+            /* each frame's time is where the samples so far end, near enough */
+            ASSERT(labs((long)(f->pts - (int64_t)samples * 1000000 / rate)) < 30000);
+            for (size_t i = 0; i < (size_t)f->samples; i++) {
+                if ((x[2 * i] >= 0) != (last >= 0))
+                    crossings++;
+                last = x[2 * i];
+            }
+            samples += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    ASSERT_EQ(LINKS - 1, configs);
+    ASSERT(labs(samples - (long)rate * OGG_SECONDS * LINKS) < 4096 * LINKS);
+    ASSERT(crossings > (880 * OGG_SECONDS - 40) * LINKS && crossings < (880 * OGG_SECONDS + 40) * LINKS);
+
+    /* The decoder has the last link's headers now. Back to the start: the
+     * first link's again, then time 0. */
+    papaya_decoder_flush(d);
+    ASSERT_EQ(0, papaya_demux_seek(dm, 0));
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT(p->flags & PAPAYA_PACKET_CONFIG);
+    ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+    papaya_packet_free(&p);
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT_EQ(0, (int)p->pts);
+    papaya_packet_free(&p);
+    /* Into the middle link: its headers, then a time within it that decodes. */
+    papaya_decoder_flush(d);
+    ASSERT_EQ(0, papaya_demux_seek(dm, total / 2));
+    ASSERT_EQ(0, papaya_demux_read(dm, &p));
+    ASSERT(p->flags & PAPAYA_PACKET_CONFIG);
+    ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+    papaya_packet_free(&p);
+    samples = 0;
+    for (int got = 0; !got;) {
+        ASSERT_EQ(0, papaya_demux_read(dm, &p));
+        ASSERT(p->pts == PAPAYA_NOPTS || (p->pts <= total / 2 && p->pts > total / 2 - 1500000));
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            got = 1;
+            papaya_frame_unref(&f);
+        }
+    }
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    free(file.data);
+    PASS();
+}
+
 SUITE(music)
 {
     RUN_TEST(wav_layouts);
@@ -877,6 +966,8 @@ SUITE(music)
     RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_VORBIS);
     RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_OPUS);
     RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_FLAC);
+    RUN_TEST1(ogg_chained, PAPAYA_CODEC_VORBIS);
+    RUN_TEST1(ogg_chained, PAPAYA_CODEC_OPUS);
 }
 
 GREATEST_MAIN_DEFS();

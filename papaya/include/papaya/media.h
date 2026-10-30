@@ -37,6 +37,9 @@ PAPAYA_EXPORT size_t papaya_buffer_size(const papaya_buffer *b);
 enum {
     PAPAYA_PACKET_KEY = 1 << 0,     /* decoding can start here */
     PAPAYA_PACKET_DISCARD = 1 << 1, /* decode but do not show (e.g. Opus pre-skip) */
+    /* data is the stream's new extradata (the next link of a chained Ogg
+     * file): the decoder finishes what it has and starts again from it */
+    PAPAYA_PACKET_CONFIG = 1 << 2,
 };
 
 typedef struct papaya_packet {
