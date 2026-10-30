@@ -118,7 +118,9 @@ _itt_library(papaya_avcdec "${_itt_root}/libavc" SOURCES ${_avc_srcs}
              INCLUDES "${_itt_root}/libavc/common/mvc")
 
 _itt_sources("${_itt_root}/libhevc" _hevc_srcs common/common.cmake decoder/libhevcdec.cmake)
-if(NOT _itt_x86 AND NOT _itt_arm64)
+if(_itt_arm64)
+    list(APPEND _hevc_srcs "${_itt_shim}/hevc_arm64_fixup.c")
+elseif(NOT _itt_x86)
     list(APPEND _hevc_srcs "${_itt_shim}/hevc_generic_arch.c")
 endif()
 _itt_library(papaya_hevcdec "${_itt_root}/libhevc" SOURCES ${_hevc_srcs})
