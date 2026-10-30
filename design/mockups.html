@@ -139,11 +139,37 @@ p { margin: 0; }
 .decide { display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 28px; }
 .decide ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; max-width: 75ch; }
 
+/* audio, same bar as video */
+.audio2 { background: linear-gradient(160deg, #1d161b, #0e0c10 60%); }
+.music { position: absolute; left: 0; right: 0; top: 0; bottom: 64px; display: grid; grid-template-columns: 150px 1fr;
+  gap: 22px; padding: 22px; align-items: center; }
+.drawer { position: absolute; top: 0; right: 0; bottom: 64px; width: 42%; background: rgba(23,21,26,.97);
+  border-left: 1px solid var(--line); font-size: 13.5px; overflow: hidden; }
+.drawer > div { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; padding: 8px 14px; color: var(--mute); }
+.drawer > div + div { border-top: 1px solid #221f25; }
+.drawer .drawer-head { grid-template-columns: 1fr auto; color: var(--ink); font-weight: 600; }
+.drawer .now { color: var(--ink); background: rgba(255,122,69,.10); box-shadow: inset 3px 0 0 var(--papaya); }
+.drawer .n { font-family: var(--mono); font-size: 12px; padding-top: 1px; }
+.drawer .dim { color: var(--mute); font-weight: 400; }
+.btn.on { background: rgba(255,122,69,.18); }
+.btn.on .icon { fill: var(--papaya); }
+
+/* settings panel */
+.frame.dimmed { filter: brightness(.45); }
+.panel { position: absolute; top: 0; right: 0; bottom: 0; width: 62%; background: rgba(23,21,26,.97); border-left: 1px solid var(--line);
+  display: grid; grid-template-rows: auto 1fr; }
+.tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--line); overflow-x: auto; font-size: 13px; }
+.tabs span { padding: 5px 10px; border-radius: 8px; color: var(--mute); white-space: nowrap; }
+.tabs .on { background: var(--raise); color: var(--ink); }
+.panel .pane { padding: 14px 16px; gap: 12px; font-size: 13.5px; }
+
 @media (max-width: 860px) {
   .screen { grid-template-columns: 1fr; }
   .vis { grid-template-columns: 1fr; }
   .player { grid-template-columns: 1fr; }
-  .settings { grid-template-columns: 1fr; }
+  .music { grid-template-columns: 90px 1fr; }
+  .music .art { width: 90px; height: 90px; }
+  .drawer, .panel { width: 100%; }
   .side { border-right: 0; border-bottom: 1px solid var(--line); grid-auto-flow: column; overflow-x: auto; }
   .hide-narrow { display: none; }
 }
@@ -160,6 +186,7 @@ p { margin: 0; }
   <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></symbol>
   <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></symbol>
   <symbol id="i-pip" viewBox="0 0 24 24"><path d="M3 5h18v14H3zm2 2v10h14V7zm6 4h6v4h-6z"/></symbol>
+  <symbol id="i-opts" viewBox="0 0 24 24"><path d="M3 6h9v2H3zm13 0h5v2h-5zm-3-2h2v6h-2zM3 16h3v2H3zm7 0h11v2H10zm-3-2h2v6H7z"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></symbol>
   <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zm10 0h6v6h-2V6h-4zM4 14h2v4h4v2H4zm14 4v-4h2v6h-6v-2z"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm14-2v-4l4 3z"/></symbol>
@@ -168,7 +195,7 @@ p { margin: 0; }
 <main>
   <header class="page">
     <h1>PapayaPlayer screen mockups</h1>
-    <p class="lede">Phase 3 starts by agreeing the look before building it. Each screen below follows the "UI direction" in TECH-STACK.md, with notes on what Reaktor can draw today and the choices left open. The numbered questions at the end are the ones to settle.</p>
+    <p class="lede">Phase 3 starts by agreeing the look before building it. Each screen below follows the "UI direction" in TECH-STACK.md, with notes on what Reaktor can draw today. The choices made from the first draft are listed at the end.</p>
   </header>
 
   <!-- 1 -->
@@ -190,7 +217,7 @@ p { margin: 0; }
           <span class="spacer"></span>
           <svg class="icon sm"><use href="#i-vol"/></svg><span class="vol hide-narrow"></span>
           <div class="btn hide-narrow"><svg class="icon sm"><use href="#i-pip"/></svg></div>
-          <div class="btn"><svg class="icon sm"><use href="#i-gear"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-opts"/></svg></div>
           <div class="btn"><svg class="icon sm"><use href="#i-full"/></svg></div>
         </div>
       </div>
@@ -200,7 +227,7 @@ p { margin: 0; }
       <ul>
         <li>Black stage, big centred play while paused.</li>
         <li>Full-width seek bar with a thumb; under it the pill play button, previous, −10 s, +10 s, next, time.</li>
-        <li>Right side: volume, picture-in-picture, settings, full screen. The settings cog sits at the far right, as it does in the app today.</li>
+        <li>Right side: volume, picture-in-picture, options (settings), full screen.</li>
         <li>Folder and file pills top left; both bars fade out while playing.</li>
       </ul>
       <h3>Reaktor today</h3>
@@ -234,7 +261,7 @@ p { margin: 0; }
           <span class="spacer"></span>
           <div class="btn"><svg class="icon sm"><use href="#i-vol"/></svg></div>
           <div class="btn hide-narrow"><svg class="icon sm"><use href="#i-pip"/></svg></div>
-          <div class="btn"><svg class="icon sm"><use href="#i-gear"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-opts"/></svg></div>
           <div class="btn"><svg class="icon sm"><use href="#i-full"/></svg></div>
         </div>
       </div>
@@ -244,7 +271,7 @@ p { margin: 0; }
       <ul>
         <li>The controls float in a rounded, outlined bar instead of spanning the edge.</li>
         <li>Seek fill, play button, folder pills and the chosen menu row carry the guava-to-papaya gradient.</li>
-        <li>Volume opens as a vertical slider above its icon; settings open as a menu above the cog (shown with both open).</li>
+        <li>Volume opens as a vertical slider above its icon; the quick options menu opens above the options button (shown with both open).</li>
       </ul>
       <h3>Reaktor today</h3>
       <p><span class="tag ok">ready</span> outlined rounded bar, per-corner radius, borders, opacity.</p>
@@ -254,48 +281,51 @@ p { margin: 0; }
 
   <!-- 3 -->
   <section class="screen" aria-labelledby="s3">
-    <div class="head"><span class="num">03</span><h2 id="s3">Audio</h2></div>
-    <div class="win audio">
-      <div class="player">
+    <div class="head"><span class="num">03</span><h2 id="s3">Audio, with the playlist out</h2></div>
+    <div class="win audio2">
+      <div class="music">
         <div class="art" role="img" aria-label="Album art"></div>
         <div class="meta">
           <div class="txt dim">Mira Holt · Low Tide Hours</div>
           <div class="title">Salt on the Window</div>
           <div class="bars" id="mini-bars" aria-hidden="true"></div>
-          <div class="seek"><div class="fill" style="background:var(--papaya)"></div><div class="thumb" style="background:var(--papaya)"></div></div>
-          <div class="row">
-            <span class="txt">1:31 <span class="dim">/ 3:58</span></span>
-            <span class="spacer"></span>
-            <div class="btn"><svg class="icon sm"><use href="#i-back"/></svg></div>
-            <div class="btn"><svg class="icon"><use href="#i-prev"/></svg></div>
-            <div class="round"><svg class="icon"><use href="#i-play"/></svg></div>
-            <div class="btn"><svg class="icon"><use href="#i-next"/></svg></div>
-            <div class="btn"><svg class="icon sm"><use href="#i-fwd"/></svg></div>
-            <span class="spacer"></span>
-            <svg class="icon sm"><use href="#i-vol"/></svg><span class="vol hide-narrow"></span>
-            <span class="speed">1.0×</span>
-            <div class="btn"><svg class="icon sm"><use href="#i-list"/></svg></div>
-          </div>
         </div>
       </div>
-      <div class="list">
+      <aside class="drawer" aria-label="Playlist">
+        <div class="drawer-head"><span>Low Tide Hours</span><span class="dim">4 tracks</span></div>
         <div><span class="n">01</span><span>Harbour Lights</span><span>3:12</span></div>
         <div class="now"><span class="n">02</span><span>Salt on the Window</span><span>3:58</span></div>
         <div><span class="n">03</span><span>Ferry Timetable</span><span>4:41</span></div>
         <div><span class="n">04</span><span>Low Tide Hours</span><span>5:06</span></div>
+      </aside>
+      <div class="bottom">
+        <div class="seek"><div class="fill"></div><div class="thumb"></div></div>
+        <div class="row">
+          <div class="btn play"><svg class="icon sm"><use href="#i-pause"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-prev"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-back"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-fwd"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-next"/></svg></div>
+          <span class="txt">1:31 <span class="dim">/ 3:58</span></span>
+          <span class="spacer"></span>
+          <svg class="icon sm"><use href="#i-vol"/></svg><span class="vol hide-narrow"></span>
+          <div class="btn on"><svg class="icon sm"><use href="#i-list"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-opts"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-full"/></svg></div>
+        </div>
       </div>
     </div>
     <div class="notes">
       <h3>What it is</h3>
       <ul>
-        <li>Album art left; artist, title, a small visualiser strip, thin progress bar.</li>
-        <li>Large round play with previous / next either side, ±15 s outside those.</li>
-        <li>Volume, speed and the playlist toggle on the right; the folder's tracks below, current one marked with an accent edge.</li>
+        <li>The same control bar as video, in the same order, so both feel like one player. Picture-in-picture gives way to the playlist button.</li>
+        <li>Above the bar: album art, artist and title, and the visualiser.</li>
+        <li>The playlist slides out from the right over the music area; the current track is marked with an accent edge. Shown open here.</li>
         <li>Shown whenever the file has no video.</li>
       </ul>
       <h3>Reaktor today</h3>
-      <p><span class="tag ok">ready</span> round buttons, list rows, images for the art.</p>
-      <p><span class="tag work">needs work</span> the visualiser bars (cavacore + our drawing, phase 3 items) and gradient bars.</p>
+      <p><span class="tag ok">ready</span> the bar (it is screen 01's), list rows, images for the art, a panel that slides by moving its box.</p>
+      <p><span class="tag work">needs work</span> the visualiser bars (cavacore + our drawing) and their gradient.</p>
     </div>
   </section>
 
@@ -321,40 +351,43 @@ p { margin: 0; }
 
   <!-- 5 -->
   <section class="screen" aria-labelledby="s5">
-    <div class="head"><span class="num">05</span><h2 id="s5">Settings</h2></div>
-    <div class="win settings">
-      <div class="side">
-        <div class="on">Playback</div><div>Video</div><div>Audio</div><div>Subtitles</div><div>Visualiser</div><div>Window</div><div>Keys</div>
-      </div>
-      <div class="pane">
-        <div class="field"><span>Play the next file at the end<small>Moves on through the folder.</small></span><span class="toggle"></span></div>
-        <div class="field"><span>Resume where I left off<small>Per file, kept for 90 days.</small></span><span class="toggle off"></span></div>
-        <div class="field"><span>Skip step<small>The ± buttons and J / L.</small></span><span class="seg"><span>5 s</span><span class="on">10 s</span><span>15 s</span><span>30 s</span></span></div>
-        <div class="field"><span>Default speed</span><span class="seg"><span>0.75×</span><span class="on">1×</span><span>1.25×</span><span>1.5×</span></span></div>
-        <div class="field"><span>Controls style<small>Screens 01 and 02.</small></span><span class="seg"><span class="on">Minimal</span><span>Accent</span></span></div>
-      </div>
+    <div class="head"><span class="num">05</span><h2 id="s5">Settings panel</h2></div>
+    <div class="win">
+      <div class="frame dimmed"></div>
+      <aside class="panel" aria-label="Settings">
+        <div class="tabs"><span class="on">Playback</span><span>Video</span><span>Audio</span><span>Subtitles</span><span>Visualiser</span><span>Window</span></div>
+        <div class="pane">
+          <div class="field"><span>Controls style<small>Screens 01 and 02.</small></span><span class="seg"><span class="on">Minimal</span><span>Accent</span></span></div>
+          <div class="field"><span>Play the next file at the end<small>Moves on through the folder.</small></span><span class="toggle"></span></div>
+          <div class="field"><span>Resume where I left off<small>Per file, kept for 90 days.</small></span><span class="toggle off"></span></div>
+          <div class="field"><span>Skip step<small>The ± buttons and J / L.</small></span><span class="seg"><span>5 s</span><span class="on">10 s</span><span>30 s</span></span></div>
+          <div class="field"><span>Default speed</span><span class="seg"><span>0.75×</span><span class="on">1×</span><span>1.5×</span></span></div>
+        </div>
+      </aside>
     </div>
     <div class="notes">
       <h3>What it is</h3>
       <ul>
-        <li>The cog's quick popup stays for the few things changed mid-film (speed, tracks, subtitles).</li>
-        <li>This full window holds everything else, grouped by topic.</li>
-        <li>Today's two settings (title bar, next file) move here.</li>
+        <li>A full-height panel inside the main window, opened by the options button; the video dims and keeps playing behind it.</li>
+        <li>Tabs by topic across the top; the controls style switch is the first setting.</li>
+        <li>Today's two settings (title bar, next file) move here; the quick popup on the options button keeps speed, tracks and subtitles.</li>
+        <li>Escape or a click outside closes it.</li>
       </ul>
       <h3>Reaktor today</h3>
-      <p><span class="tag ok">ready</span> tabs, toggles, segmented selects; a second window works.</p>
+      <p><span class="tag ok">ready</span> tabs, toggles, segmented selects, a filled panel over the video.</p>
     </div>
   </section>
 
   <section class="decide" aria-labelledby="sq">
-    <h2 id="sq">To decide</h2>
+    <h2 id="sq">Decided (2026-10-30)</h2>
     <ol>
-      <li><b>Controls style:</b> minimal (01), accent (02), or both with a setting as in 05? Both costs little extra once the widgets exist.</li>
-      <li><b>Gradients:</b> draw them in our own widgets now, or ask for gradients in Reaktor's CSS (with the GPU-renderer and HDR requests already in REAKTOR-HDR.md)?</li>
-      <li><b>Accent colour:</b> papaya orange with a guava-pink gradient, as shown, or another?</li>
-      <li><b>Audio screen:</b> playlist always below (03), or a slide-out panel behind the list button?</li>
-      <li><b>Visualiser:</b> which style and colour source is the default, and does it also run behind video-less files in full screen?</li>
-      <li><b>Settings:</b> a separate window (05), or a full-height panel inside the main window?</li>
+      <li><b>Controls style:</b> both, minimal (01) and accent (02), switched in settings.</li>
+      <li><b>Audio:</b> the same control bar as video, with art, title and visualiser above it (03).</li>
+      <li><b>Gradients:</b> from Reaktor's CSS; the request is written up for Reaktor.</li>
+      <li><b>Accent colour:</b> papaya orange, with the guava-pink gradient.</li>
+      <li><b>Playlist:</b> a slide-out panel (03).</li>
+      <li><b>Visualiser:</b> bars by default; the other styles and colour sources selectable (04).</li>
+      <li><b>Settings:</b> a panel inside the main window (05).</li>
     </ol>
   </section>
 </main>
