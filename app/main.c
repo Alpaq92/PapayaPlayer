@@ -645,12 +645,13 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         reaktor_button(&(reaktor_button_spec){
             .icon = fullscreen() ? "fullscreen-exit" : "fullscreen-enter", .name = "fullscreen",
             .tooltip = fullscreen() ? "Exit full screen (F)" : "Full screen (F)", .keys = "F", .flat = 1,
-            .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_fullscreen, NULL } });
-        REAKTOR_ROW(.w = 36.0f, .h = 36.0f, .mt = 6.0f) {
+            /* narrower than the others: a flat icon's own margin is gap enough */
+            .box = { .w = 30.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_fullscreen, NULL } });
+        REAKTOR_ROW(.w = 30.0f, .h = 36.0f, .mt = 6.0f) {
             reaktor_box_rect(&ui.cog_rect);
             reaktor_button(&(reaktor_button_spec){
                 .icon = "options-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
-                .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_settings, NULL } });
+                .box = { .w = 30.0f, .h = 36.0f }, .on_press = { toggle_settings, NULL } });
         }
         if (ui.volume != volume_before) {
             ui.muted = ui.volume <= 0.0f;
