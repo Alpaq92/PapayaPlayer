@@ -554,6 +554,150 @@ adts_variants(void)
     PASS();
 }
 
+/* ---- Cover art: ID3 pictures before an MP3, a PICTURE block in FLAC ---- */
+
+typedef struct {
+    uint8_t data[512];
+    size_t size;
+} small;
+
+static void
+put_bytes(small *b, const void *p, size_t n)
+{
+    memcpy(b->data + b->size, p, n);
+    b->size += n;
+}
+
+static void
+put_be(small *b, uint32_t v, int n)
+{
+    for (int i = n - 1; i >= 0; i--)
+        b->data[b->size++] = (uint8_t)(v >> (8 * i));
+}
+
+/* An ID3v2 frame: id, size (syncsafe in v2.4), flags, then body. */
+static void
+id3_frame(small *tag, int version, const char *id, const small *body, int flags)
+{
+    put_bytes(tag, id, version == 2 ? 3 : 4);
+    if (version == 2)
+        put_be(tag, (uint32_t)body->size, 3);
+    else if (version == 3)
+        put_be(tag, (uint32_t)body->size, 4);
+    else
+        put_be(tag, (uint32_t)((body->size & 127) | (body->size >> 7 & 127) << 8), 4);
+    if (version != 2)
+        put_be(tag, (uint32_t)flags, 2);
+    put_bytes(tag, body->data, body->size);
+}
+
+/* The bytes of tag (with its frames) as an ID3v2 file header. */
+static void
+id3_header(bytes *file, int version, const small *tag)
+{
+    uint8_t h[10] = { 'I', 'D', '3', (uint8_t)version, 0, 0, 0, 0, (uint8_t)(tag->size >> 7 & 127),
+                      (uint8_t)(tag->size & 127) };
+
+    file->data = realloc(file->data, file->size + 10 + tag->size);
+    memcpy(file->data + file->size, h, 10);
+    memcpy(file->data + file->size + 10, tag->data, tag->size);
+    file->size += 10 + tag->size;
+}
+
+static int
+cover_is(papaya_demuxer *dm, const char *want)
+{
+    size_t n;
+    const uint8_t *cover = dm ? papaya_demux_cover(dm, &n) : NULL;
+
+    return cover && n == strlen(want) && memcmp(cover, want, n) == 0;
+}
+
+/* An MP3 behind a tag of each ID3 version: the picture is found, the front
+ * cover wins over another kind, and the audio still plays. */
+TEST
+mp3_cover(void)
+{
+    char path[1024];
+    size_t mp3_size;
+    uint8_t *mp3;
+
+    snprintf(path, sizeof path, "%s/l3-si.bit", MINIMP3_VECTORS);
+    mp3 = slurp(path, &mp3_size);
+    ASSERT(mp3 != NULL);
+    for (int version = 2; version <= 4; version++) {
+        small tag = { { 0 }, 0 }, body = { { 0 }, 0 };
+        bytes file = { NULL, 0 };
+        papaya_demuxer *dm;
+        papaya_packet *p;
+
+        /* first a back cover (kind 4), then the front (3), UTF-16 descriptions */
+        for (int kind = 4; kind >= 3; kind--) {
+            body.size = 0;
+            put_be(&body, 1, 1); /* UTF-16 with a BOM */
+            if (version == 2)
+                put_bytes(&body, "PNG", 3);
+            else
+                put_bytes(&body, "image/png", 10);
+            put_be(&body, (uint32_t)kind, 1);
+            put_bytes(&body, "\xff\xfe" "a\0\0\0", 6);
+            put_bytes(&body, kind == 3 ? "front" : "back", kind == 3 ? 5 : 4);
+            id3_frame(&tag, version, version == 2 ? "PIC" : "APIC", &body, 0);
+        }
+        put_bytes(&tag, "\0\0\0\0\0\0\0\0\0\0", 10); /* padding */
+        id3_header(&file, version, &tag);
+        file.data = realloc(file.data, file.size + mp3_size);
+        memcpy(file.data + file.size, mp3, mp3_size);
+        file.size += mp3_size;
+        dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
+        ASSERT(dm != NULL);
+        ASSERT_STR_EQ("mp3", papaya_demux_name(dm));
+        ASSERTm("front cover", cover_is(dm, "front"));
+        ASSERT_EQ(0, papaya_demux_read(dm, &p));
+        papaya_packet_free(&p);
+        papaya_demux_close(&dm);
+        /* cut anywhere in the tag: no crash, no stray picture */
+        for (size_t cut = 1; cut < 10 + tag.size; cut += 7) {
+            dm = papaya_demux_open(papaya_io_open_memory(file.data, cut));
+            papaya_demux_close(&dm);
+        }
+        free(file.data);
+    }
+    /* v2.4 with the picture frame unsynchronised: FF 00 becomes FF again */
+    {
+        small tag = { { 0 }, 0 }, body = { { 0 }, 0 };
+        bytes file = { NULL, 0 };
+        papaya_demuxer *dm;
+
+        put_be(&body, 0, 1);
+        put_bytes(&body, "image/jpeg", 11);
+        put_be(&body, 3, 1);
+        put_be(&body, 0, 1); /* empty description */
+        put_bytes(&body, "\xff\x00\xd8\xff\x00\xe0jpeg", 10);
+        id3_frame(&tag, 4, "APIC", &body, 0x02);
+        id3_header(&file, 4, &tag);
+        file.data = realloc(file.data, file.size + mp3_size);
+        memcpy(file.data + file.size, mp3, mp3_size);
+        file.size += mp3_size;
+        dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
+        ASSERT(cover_is(dm, "\xff\xd8\xff\xe0jpeg"));
+        papaya_demux_close(&dm);
+        free(file.data);
+    }
+    /* no tag: no cover */
+    {
+        papaya_demuxer *dm = papaya_demux_open(papaya_io_open_memory(mp3, mp3_size));
+        size_t n;
+
+        ASSERT(dm != NULL);
+        ASSERT(papaya_demux_cover(dm, &n) == NULL);
+        ASSERT_EQ(0, (int)n);
+        papaya_demux_close(&dm);
+    }
+    free(mp3);
+    PASS();
+}
+
 /* ---- FLAC: libFLAC writes the file, every sample comes back ------------ */
 
 static FLAC__StreamEncoderWriteStatus
@@ -605,10 +749,39 @@ flac_round_trip(int bits)
     ASSERT(FLAC__stream_encoder_process(enc, chans, N));
     ASSERT(FLAC__stream_encoder_finish(enc));
     FLAC__stream_encoder_delete(enc);
+    /* A PICTURE block after STREAMINFO, as taggers write it. */
+    {
+        small pic = { { 0 }, 0 };
+        uint8_t *with;
+
+        put_be(&pic, 6, 1); /* PICTURE, not the last block */
+        put_be(&pic, 0, 3);
+        put_be(&pic, 3, 4); /* front cover */
+        put_be(&pic, 9, 4);
+        put_bytes(&pic, "image/png", 9);
+        put_be(&pic, 3, 4);
+        put_bytes(&pic, "art", 3);
+        for (int i = 0; i < 4; i++)
+            put_be(&pic, 0, 4); /* width, height, depth, colours */
+        put_be(&pic, 9, 4);
+        put_bytes(&pic, "flacimage", 9);
+        pic.data[1] = 0;
+        pic.data[2] = 0;
+        pic.data[3] = (uint8_t)(pic.size - 4);
+        ASSERT(file.size > 42 && !(file.data[4] & 0x80)); /* STREAMINFO is not the last block */
+        with = malloc(file.size + pic.size);
+        memcpy(with, file.data, 42);
+        memcpy(with + 42, pic.data, pic.size);
+        memcpy(with + 42 + pic.size, file.data + 42, file.size - 42);
+        free(file.data);
+        file.data = with;
+        file.size += pic.size;
+    }
 
     dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
     ASSERT(dm != NULL);
     ASSERT_STR_EQ("flac", papaya_demux_name(dm));
+    ASSERT(cover_is(dm, "flacimage"));
     ASSERT_EQ((int64_t)N * 1000000 / RATE, papaya_demux_duration(dm));
     pool = papaya_frame_pool_new();
     d = papaya_decoder_open(papaya_demux_stream(dm, 0), pool);
@@ -957,6 +1130,7 @@ SUITE(music)
     RUN_TEST(truncated_wav_is_safe);
     RUN_TEST(mp3_vectors);
     RUN_TEST(mp3_duration_and_seek);
+    RUN_TEST(mp3_cover);
     RUN_TEST1(adts_round_trip, 2); /* AAC-LC */
     RUN_TEST1(adts_round_trip, 5); /* HE-AAC */
     RUN_TEST(adts_variants);

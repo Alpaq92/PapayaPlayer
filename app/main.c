@@ -19,6 +19,7 @@
 #include "papaya/thread.h"
 #include "papaya/version.h"
 #include "playlist.h"
+#include "plutovg.h"
 #include "reaktor/main.h"
 #include "reaktor/reaktor.h"
 
@@ -65,6 +66,8 @@ static struct {
     int custom_titlebar;     /* borderless window, the top bar is the title bar */
     reaktor_bool autoplay_next;
     int accent_style;        /* controls: 0 minimal, 1 accent (a floating, outlined bar) */
+    SDL_Texture *cover;      /* the file's embedded picture, or NULL */
+    int cover_w, cover_h;
     int vis_style;           /* visualiser: VIS_BARS ... VIS_OFF */
     int vis_colour;          /* VIS_GRADIENT, VIS_ACCENT, VIS_HUE */
     papaya_spectrum *vis;
@@ -320,6 +323,32 @@ close_file(void)
         SDL_DestroyTexture(ui.texture);
         ui.texture = NULL;
     }
+    if (ui.cover) {
+        SDL_DestroyTexture(ui.cover);
+        ui.cover = NULL;
+    }
+}
+
+/* The file's embedded picture as a texture, for the music view. */
+static void
+load_cover(void)
+{
+    size_t size;
+    const uint8_t *data = papaya_player_cover(ui.player, &size);
+    plutovg_surface_t *s;
+
+    if (!data || size > INT32_MAX || !(s = plutovg_surface_load_from_image_data(data, (int)size)))
+        return;
+    ui.cover_w = plutovg_surface_get_width(s);
+    ui.cover_h = plutovg_surface_get_height(s);
+    /* premultiplied ARGB in native order, as SDL's ARGB8888 */
+    ui.cover = SDL_CreateTexture(reaktor_sdl_renderer(ui.app), SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+                                 ui.cover_w, ui.cover_h);
+    if (ui.cover) {
+        SDL_UpdateTexture(ui.cover, NULL, plutovg_surface_get_data(s), plutovg_surface_get_stride(s));
+        SDL_SetTextureBlendMode(ui.cover, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+    }
+    plutovg_surface_destroy(s);
 }
 
 static void
@@ -355,6 +384,7 @@ play_path(const char *path)
         return;
     }
     apply_volume();
+    load_cover();
     if (bslash && (!name || bslash > name))
         name = bslash;
     snprintf(ui.title, sizeof ui.title, "%s", name ? name + 1 : path);
@@ -1117,8 +1147,8 @@ draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
         reaktor_wake(ui.app);
 }
 
-/* A file with no picture: its art, name and visualiser where the video
- * would be. The art is a papaya square until cover art is read. */
+/* A file with no picture: its cover art (or a papaya square), name and
+ * visualiser where the video would be. */
 static void
 draw_music(struct reaktor_context *ctx, float w, float h)
 {
@@ -1129,10 +1159,27 @@ draw_music(struct reaktor_context *ctx, float w, float h)
 
     if (top < TOP_H + 8.0f)
         top = TOP_H + 8.0f;
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x, top, art, art), 14.0f,
-                      reaktor_rgba(255, 122, 69, 255));
-    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x + art * 0.3f, top + art * 0.3f, art * 0.4f, art * 0.4f),
-                      art * 0.2f, reaktor_rgba(255, 61, 110, 255));
+    if (ui.cover && ui.cover_w > 0 && ui.cover_h > 0) {
+        /* the middle square of the picture */
+        int side = ui.cover_w < ui.cover_h ? ui.cover_w : ui.cover_h;
+        struct reaktor_image im = { 0 };
+
+        im.handle.ptr = ui.cover;
+        im.w = (unsigned short)ui.cover_w;
+        im.h = (unsigned short)ui.cover_h;
+        im.region[0] = (unsigned short)((ui.cover_w - side) / 2);
+        im.region[1] = (unsigned short)((ui.cover_h - side) / 2);
+        im.region[2] = (unsigned short)side;
+        im.region[3] = (unsigned short)side;
+        reaktor_draw_image(reaktor_window_get_canvas(ctx), reaktor_rect(x, top, art, art), &im,
+                           reaktor_rgb(255, 255, 255));
+    } else {
+        reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x, top, art, art), 14.0f,
+                          reaktor_rgba(255, 122, 69, 255));
+        reaktor_fill_rect(reaktor_window_get_canvas(ctx),
+                          reaktor_rect(x + art * 0.3f, top + art * 0.3f, art * 0.4f, art * 0.4f), art * 0.2f,
+                          reaktor_rgba(255, 61, 110, 255));
+    }
     /* the names centred beside the art, or at its top above the visualiser */
     REAKTOR_COLUMN(.w = tw, .ml = tx, .mt = vis ? top + 4.0f : top + art / 2.0f - 30.0f, .gap = 4.0f) {
         reaktor_label(&(reaktor_label_spec){ .text = ui.list.count ? ui.list.name : "", .color = "--text-muted",

@@ -638,6 +638,23 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
     m->track_count++;
 }
 
+/* The cover art: moov/udta/meta/ilst/covr/data, JPEG or PNG. */
+static void
+parse_covr(papaya_demuxer *d, rd moov)
+{
+    rd udta, meta, ilst, covr, data;
+
+    if (!find_box(moov, FOURCC('u', 'd', 't', 'a'), &udta) || !find_box(udta, FOURCC('m', 'e', 't', 'a'), &meta))
+        return;
+    if (left(&meta) >= 4 && !meta.p[0] && !meta.p[1] && !meta.p[2] && !meta.p[3])
+        skip(&meta, 4);
+    if (!find_box(meta, FOURCC('i', 'l', 's', 't'), &ilst) || !find_box(ilst, FOURCC('c', 'o', 'v', 'r'), &covr)
+        || !find_box(covr, FOURCC('d', 'a', 't', 'a'), &data) || left(&data) <= 8)
+        return;
+    skip(&data, 8); /* type (13 JPEG, 14 PNG), locale */
+    papaya_demux_set_cover(d, data.p, (size_t)left(&data), 1);
+}
+
 /* iTunes' gapless tag, moov/udta/meta/ilst/"----" named iTunSMPB: hex
  * fields " 00000000 <delay> <padding> <total samples> ...". Used for the first
  * AAC track when no edit list placed its start. */
@@ -1004,6 +1021,7 @@ mp4_open(papaya_demuxer *d, papaya_io *io)
             if (type == FOURCC('t', 'r', 'a', 'k'))
                 parse_trak(m, d, b);
         parse_itunsmpb(m, (rd){ moov, moov + moov_size, 0 });
+        parse_covr(d, (rd){ moov, moov + moov_size, 0 });
         if (m->fragmented)
             parse_mvex(m, mvex);
     }

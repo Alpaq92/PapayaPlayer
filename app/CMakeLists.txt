@@ -1,5 +1,5 @@
 reaktor_add_app(papayaplayer MODULES a11y locale text settings SOURCES main.c playlist.c)
-target_link_libraries(papayaplayer PRIVATE papaya_core)
+target_link_libraries(papayaplayer PRIVATE papaya_core plutovg) # plutovg decodes cover art (JPEG, PNG)
 # Ionicons from Reaktor's submodule until packaging ships the icons.
 target_compile_definitions(papayaplayer PRIVATE
     PAPAYA_ICON_DIR="${PROJECT_SOURCE_DIR}/third_party/reaktor/external/ionicons/src/svg")

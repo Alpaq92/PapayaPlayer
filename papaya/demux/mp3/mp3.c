@@ -226,6 +226,7 @@ mp3_open(papaya_demuxer *d, papaya_io *io)
     while (papaya_io_read_at(io, pos, b, 10) == 0 && !memcmp(b, "ID3", 3)) {
         int64_t len = (int64_t)(b[6] & 127) << 21 | (b[7] & 127) << 14 | (b[8] & 127) << 7 | (b[9] & 127);
 
+        papaya_demux_id3_cover(d, io, pos);
         pos += 10 + len + ((b[5] & 0x10) ? 10 : 0);
     }
     if (c->end != INT64_MAX && c->end >= 128) {

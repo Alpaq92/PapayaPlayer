@@ -436,6 +436,12 @@ papaya_player_position(papaya_player *p)
 int64_t papaya_player_duration(papaya_player *p) { return papaya_demux_duration(p->demux); }
 int papaya_player_dropped(papaya_player *p) { return atomic_load(&p->dropped); }
 
+const uint8_t *
+papaya_player_cover(papaya_player *p, size_t *size)
+{
+    return papaya_demux_cover(p->demux, size);
+}
+
 int
 papaya_player_scope(papaya_player *p, float *out, int n)
 {

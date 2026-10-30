@@ -24,6 +24,14 @@ typedef struct papaya_demux_backend {
 /* A zeroed stream with its index set, or NULL past PAPAYA_DEMUX_MAX_STREAMS. */
 papaya_stream_info *papaya_demux_add_stream(papaya_demuxer *d);
 void papaya_demux_set_duration(papaya_demuxer *d, int64_t duration);
+/* Keeps a copy of a picture; front says it is the front cover, which
+ * replaces any other kind. */
+void papaya_demux_set_cover(papaya_demuxer *d, const uint8_t *data, size_t size, int front);
+/* The picture in the ID3v2 tag at pos, if any (APIC, or PIC in v2.2). */
+void papaya_demux_id3_cover(papaya_demuxer *d, papaya_io *io, int64_t pos);
+/* The picture in a FLAC PICTURE block's body (also Vorbis comments'
+ * METADATA_BLOCK_PICTURE, once decoded). */
+void papaya_demux_flac_picture(papaya_demuxer *d, const uint8_t *p, size_t size);
 
 extern const papaya_demux_backend papaya_demux_webm;
 extern const papaya_demux_backend papaya_demux_ivf;

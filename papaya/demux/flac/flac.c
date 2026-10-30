@@ -146,9 +146,11 @@ flac_open(papaya_demuxer *d, papaya_io *io)
     papaya_stream_info *s;
     flac *c;
 
-    while (papaya_io_read_at(io, pos, b, 10) == 0 && !memcmp(b, "ID3", 3))
+    while (papaya_io_read_at(io, pos, b, 10) == 0 && !memcmp(b, "ID3", 3)) {
+        papaya_demux_id3_cover(d, io, pos);
         pos += 10 + ((int64_t)(b[6] & 127) << 21 | (b[7] & 127) << 14 | (b[8] & 127) << 7 | (b[9] & 127))
                + ((b[5] & 0x10) ? 10 : 0);
+    }
     if (papaya_io_read_at(io, pos, b, 4) != 0 || memcmp(b, "fLaC", 4) != 0)
         return NULL;
     c = calloc(1, sizeof *c);
@@ -159,7 +161,7 @@ flac_open(papaya_demuxer *d, papaya_io *io)
     if (c->end < 0)
         c->end = INT64_MAX;
     pos += 4;
-    /* Metadata blocks: STREAMINFO first, the rest skipped. */
+    /* Metadata blocks: STREAMINFO first, then any PICTURE; the rest skipped. */
     for (int last = 0, first = 1; !last; first = 0) {
         uint8_t h[4];
         int64_t len;
@@ -184,6 +186,13 @@ flac_open(papaya_demuxer *d, papaya_io *io)
             c->channels = ((si[12] >> 1) & 7) + 1;
             c->bits = ((si[12] & 1) << 4 | si[13] >> 4) + 1;
             c->total = (int64_t)(si[13] & 15) << 32 | (int64_t)si[14] << 24 | si[15] << 16 | si[16] << 8 | si[17];
+        }
+        else if ((h[0] & 127) == 6 && len > 0 && len <= (16 << 20)) {
+            uint8_t *pic = malloc((size_t)len);
+
+            if (pic && papaya_io_read_at(io, pos + 4, pic, (size_t)len) == 0)
+                papaya_demux_flac_picture(d, pic, (size_t)len);
+            free(pic);
         }
         pos += 4 + len;
     }

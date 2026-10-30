@@ -51,6 +51,8 @@ PAPAYA_EXPORT papaya_frame *papaya_player_video_frame(papaya_player *p);
 PAPAYA_EXPORT int64_t papaya_player_next_frame_in(papaya_player *p);
 /* Frames dropped because they were late, since open. */
 PAPAYA_EXPORT int papaya_player_dropped(papaya_player *p);
+/* papaya_demux_cover() for the open file. */
+PAPAYA_EXPORT const uint8_t *papaya_player_cover(papaya_player *p, size_t *size);
 /* papaya_audio_out_scope() for the player's sound; 0 without one. */
 PAPAYA_EXPORT int papaya_player_scope(papaya_player *p, float *out, int n);
 

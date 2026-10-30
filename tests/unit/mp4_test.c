@@ -514,6 +514,8 @@ desc(buf *b, int tag, size_t len)
 
 /* One mp4a track, every access unit in one chunk. itunes: the start and
  * length in iTunSMPB, else in an edit list. */
+#define M4A_COVER "\x89PNG\r\n\x1a\n cover in covr"
+
 static void
 build_m4a(buf *b, const aac_units *u, const unsigned char *asc, int asc_size, int itunes)
 {
@@ -639,6 +641,13 @@ build_m4a(buf *b, const aac_units *u, const unsigned char *asc, int asc_size, in
         put(b, smpb, strlen(smpb));
         close_box(b, part);
         close_box(b, item);
+        item = open_box(b, "covr");
+        part = open_box(b, "data");
+        be32(b, 14); /* PNG */
+        zeros(b, 4);
+        put(b, M4A_COVER, sizeof M4A_COVER - 1);
+        close_box(b, part);
+        close_box(b, item);
         close_box(b, ilst);
         close_box(b, meta);
         close_box(b, udta);
@@ -678,6 +687,17 @@ aac_gapless_in_m4a(int itunes)
     ASSERT(d != NULL);
     ASSERT_EQ(PAPAYA_CODEC_AAC, papaya_demux_stream(d, 0)->codec);
     ASSERT_EQ((int64_t)AAC_N * 1000000 / AAC_RATE, papaya_demux_stream(d, 0)->gapless_end);
+    {
+        size_t n;
+        const uint8_t *cover = papaya_demux_cover(d, &n);
+
+        if (itunes) {
+            ASSERT_EQ(sizeof M4A_COVER - 1, n);
+            ASSERT_MEM_EQ(M4A_COVER, cover, n);
+        } else {
+            ASSERT(cover == NULL);
+        }
+    }
     pool = papaya_frame_pool_new();
     dec = papaya_decoder_open(papaya_demux_stream(d, 0), pool);
     ASSERT(dec != NULL);

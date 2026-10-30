@@ -79,6 +79,10 @@ PAPAYA_EXPORT const char *papaya_demux_name(const papaya_demuxer *d);
 PAPAYA_EXPORT int papaya_demux_stream_count(const papaya_demuxer *d);
 PAPAYA_EXPORT const papaya_stream_info *papaya_demux_stream(const papaya_demuxer *d, int index);
 PAPAYA_EXPORT int64_t papaya_demux_duration(const papaya_demuxer *d);
+/* The picture embedded as the cover (ID3 APIC, MP4 covr, FLAC PICTURE): the
+ * image file's bytes, JPEG or PNG as stored, owned by the demuxer; NULL if
+ * there is none. The front cover is preferred over other pictures. */
+PAPAYA_EXPORT const uint8_t *papaya_demux_cover(const papaya_demuxer *d, size_t *size);
 
 /* Next packet of any stream in file order: 0 and *packet set, PAPAYA_DEMUX_EOF,
  * or PAPAYA_DEMUX_ERROR. */
