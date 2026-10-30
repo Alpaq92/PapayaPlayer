@@ -649,7 +649,7 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         REAKTOR_ROW(.w = 36.0f, .h = 36.0f, .mt = 6.0f) {
             reaktor_box_rect(&ui.cog_rect);
             reaktor_button(&(reaktor_button_spec){
-                .icon = "settings-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
+                .icon = "options-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
                 .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_settings, NULL } });
         }
         if (ui.volume != volume_before) {
