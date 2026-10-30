@@ -23,6 +23,7 @@
 
 #define BAR_H 80.0f  /* the seek bar, then the buttons */
 #define SEEK_H 28.0f
+#define SEEK_MARGIN 20.0f /* the seek bar's distance from the bar's sides */
 #define ACCENT_INSET 14.0f  /* the accent bar's distance from the window edges */
 #define TOP_H 52.0f
 
@@ -619,7 +620,7 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
                           reaktor_rgba(0, 0, 0, 170));
     }
     /* The seek bar across the whole width, the buttons under it. */
-    REAKTOR_ROW(.w = bw - 16.0f, .h = SEEK_H, .ml = x + 8.0f, .mt = y + 4.0f) {
+    REAKTOR_ROW(.w = bw - 2.0f * SEEK_MARGIN, .h = SEEK_H, .ml = x + SEEK_MARGIN, .mt = y + 4.0f) {
         struct reaktor_rect track;
 
         if (reaktor_box_rect(&track))
