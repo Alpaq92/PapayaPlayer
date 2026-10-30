@@ -62,6 +62,8 @@ static struct {
     int accent_style;        /* controls: 0 minimal, 1 accent (a floating, outlined bar) */
     int settings_tab;
     int settings_open;
+    int playlist_open;       /* the slide-out list of the folder's files */
+    struct reaktor_rect playlist_rect, list_button_rect;
     struct reaktor_rect settings_rect, cog_rect;
     struct reaktor_rect drag_rect;  /* the top bar's empty middle, for the hit test */
     int bars_shown;
@@ -581,6 +583,8 @@ toggle_mute(void *user)
 }
 
 static void toggle_settings(void *user);
+static void toggle_playlist(void *user);
+static float panel_bottom(float h);
 
 /* The control bar, over the bottom of the video. */
 static void
@@ -653,6 +657,12 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .text = times, .name = "time", .color = "#f2f2f2", .box = { .h = 36.0f, .ml = 6.0f } });
         REAKTOR_ROW(.weight = 1.0f, .h = 36.0f, .flags = REAKTOR_LAY_FILL_X) {
         }
+        REAKTOR_ROW(.w = 36.0f, .h = 36.0f) {
+            reaktor_box_rect(&ui.list_button_rect);
+            reaktor_button(&(reaktor_button_spec){
+                .icon = "list-outline", .name = "playlist", .tooltip = "Playlist", .flat = 1,
+                .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_playlist, NULL } });
+        }
         reaktor_button(&(reaktor_button_spec){
             .icon = sound, .name = "mute", .tooltip = ui.muted ? "Unmute (M)" : "Mute (M)", .keys = "M",
             .flat = 1, .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_mute, NULL } });
@@ -685,6 +695,16 @@ toggle_settings(void *user)
 {
     (void)user;
     ui.settings_open = !ui.settings_open;
+    ui.playlist_open = 0;
+    touch();
+}
+
+static void
+toggle_playlist(void *user)
+{
+    (void)user;
+    ui.playlist_open = !ui.playlist_open;
+    ui.settings_open = 0;
     touch();
 }
 
@@ -824,7 +844,7 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
     float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
     float pw = w * 0.62f < PANEL_MAX_W ? w * 0.62f : PANEL_MAX_W;
-    float bottom = h - BAR_H - (ui.accent_style ? ACCENT_INSET + 8.0f : 0.0f);
+    float bottom = panel_bottom(h);
     int titlebar = ui.custom_titlebar, style = ui.accent_style;
     reaktor_bool next = ui.autoplay_next;
 
@@ -872,6 +892,97 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
         reaktor_settings_save();
     }
     touch();
+}
+
+/* The bottom of the side panels: just above the control bar. */
+static float
+panel_bottom(float h)
+{
+    return h - BAR_H - (ui.accent_style ? ACCENT_INSET + 8.0f : 0.0f);
+}
+
+static const char *
+playlist_cell(int row, int column, void *user)
+{
+    static char number[16];
+
+    (void)user;
+    if (column == 0) {
+        snprintf(number, sizeof number, "%d", row + 1);
+        return number;
+    }
+    return ui.list.files[row];
+}
+
+/* The folder's files, sliding out at the right over the picture; a click
+ * plays one. A click outside closes it, as does Escape. */
+static void
+draw_playlist(struct reaktor_context *ctx, float w, float h)
+{
+    static const char *const columns[] = { "#", "Name" };
+    static const float widths[] = { 0.12f, 0.88f };
+    const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
+    float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
+    float pw = w * 0.42f < 380.0f ? w * 0.42f : 380.0f, bottom = panel_bottom(h);
+    char heading[320];
+    int chosen = ui.list.current;
+    float list_h = (float)(ui.list.count + 1) * 32.0f + 2.0f;
+
+    if (list_h > bottom - 56.0f)
+        list_h = bottom - 56.0f;
+
+    if (left->clicked && left->down && !inside(ui.playlist_rect, mx, my) && !inside(ui.list_button_rect, mx, my)) {
+        ui.playlist_open = 0;
+        return;
+    }
+    ui.playlist_rect = reaktor_rect(w - pw, 0.0f, pw, bottom);
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.playlist_rect, 0.0f, reaktor_rgba(23, 21, 26, 248));
+    reaktor_stroke_line(reaktor_window_get_canvas(ctx), w - pw, 0.0f, w - pw, bottom, 1.0f,
+                        reaktor_rgba(58, 53, 63, 255));
+    snprintf(heading, sizeof heading, "%s", ui.list.count ? ui.list.name : "No folder open");
+    REAKTOR_COLUMN(.w = pw - 24.0f, .h = bottom - 24.0f, .ml = w - pw + 12.0f, .mt = 12.0f, .gap = 8.0f) {
+        REAKTOR_ROW(.h = 24.0f, .flags = REAKTOR_LAY_FILL_X) {
+            reaktor_label(&(reaktor_label_spec){ .text = heading, .name = "playlist-heading", .color = "#f2f2f2",
+                                                 .box = { .weight = 1.0f, .h = 24.0f, .flags = REAKTOR_LAY_FILL_X } });
+            if (ui.list.count) {
+                char count[32];
+
+                snprintf(count, sizeof count, "%d files", ui.list.count);
+                reaktor_label(&(reaktor_label_spec){ .text = count, .color = "--text-muted", .box = { .h = 24.0f } });
+            }
+        }
+        if (ui.list.count
+            && reaktor_list(&(reaktor_list_spec){
+                   .name = "Playlist", .count = ui.list.count, .columns = columns, .widths = widths,
+                   .column_count = 2, .cell = playlist_cell, .selected = &chosen, .row_h = 32.0f,
+                   /* as tall as its rows (and the header), up to the panel */
+                   .box = { .h = list_h, .flags = REAKTOR_LAY_FILL_X } })
+            && chosen != ui.list.current)
+            play_index(chosen);
+    }
+    touch();
+}
+
+/* A file with no picture: its art and name where the video would be. Cover
+ * art and the visualiser come later; the art is a papaya square for now. */
+static void
+draw_music(struct reaktor_context *ctx, float w, float h)
+{
+    float art = h * 0.32f < 220.0f ? h * 0.32f : 220.0f, top = (h - BAR_H - art) / 2.0f, x = 48.0f;
+    const char *name = ui.list.current >= 0 ? ui.list.files[ui.list.current] : ui.title;
+
+    if (top < TOP_H + 8.0f)
+        top = TOP_H + 8.0f;
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x, top, art, art), 14.0f,
+                      reaktor_rgba(255, 122, 69, 255));
+    reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x + art * 0.3f, top + art * 0.3f, art * 0.4f, art * 0.4f),
+                      art * 0.2f, reaktor_rgba(255, 61, 110, 255));
+    REAKTOR_COLUMN(.w = w - x - art - 72.0f, .ml = x + art + 24.0f, .mt = top + art / 2.0f - 30.0f, .gap = 4.0f) {
+        reaktor_label(&(reaktor_label_spec){ .text = ui.list.count ? ui.list.name : "", .color = "--text-muted",
+                                             .box = { .h = 22.0f, .flags = REAKTOR_LAY_FILL_X } });
+        reaktor_label(&(reaktor_label_spec){ .text = name, .name = "track-title", .color = "#f2f2f2",
+                                             .style = ".track-title", .box = { .h = 34.0f, .flags = REAKTOR_LAY_FILL_X } });
+    }
 }
 
 /* The top bar: the folder (open file / folder, recent folders) and the file
@@ -978,18 +1089,22 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
 
     REAKTOR_FREE(.w = w, .h = h) {
         draw_video(ctx, w, h);
+        if (ui.player && !papaya_player_video_stream(ui.player))
+            draw_music(ctx, w, h);
         if (ui.error[0])
             reaktor_label(&(reaktor_label_spec){
                 .text = ui.error,
                 .name = "hint", .align = REAKTOR_TEXT_CENTERED, .color = "#dddddd",
                 .box = { .w = w, .h = 30.0f, .mt = h / 2 - 15.0f } });
-        ui.bars_shown = show_bar || ui.menu_open || ui.settings_open;
+        ui.bars_shown = show_bar || ui.menu_open || ui.settings_open || ui.playlist_open;
         if (ui.bars_shown) {
             draw_top(ctx, w);
             draw_bar(ctx, w, h, duration);
         }
         if (ui.settings_open)
             draw_settings(ctx, w, h);
+        if (ui.playlist_open)
+            draw_playlist(ctx, w, h);
     }
 }
 
@@ -1004,8 +1119,8 @@ player_key(App *app, const SDL_Event *e)
         return 1;
     }
     if (reaktor_chord(e, 0, SDLK_ESCAPE)) {
-        if (ui.settings_open)
-            ui.settings_open = 0;
+        if (ui.settings_open || ui.playlist_open)
+            ui.settings_open = ui.playlist_open = 0;
         else if (fullscreen())
             toggle_fullscreen(NULL);
         else
@@ -1107,6 +1222,9 @@ static const char papaya_css[] =
     "a:link { color: #ff7a45; }\n"
     ".ghost { background-color: rgba(0, 0, 0, 0); color: #f2f2f2; border-radius: 0.5rem; padding: 8px 10px; }\n"
     ".ghost:hover { background-color: var(--button-hover); }\n"
+    ".track-title { font-size: 1.6rem; font-weight: 600; }\n"
+    /* the playlist: rows on the panel's own colour, the header quiet */
+    ":root { --table: #232027; --table-bg: #17151a; --table-bg-alt: #1c1a20; }\n"
     "select { background-color: rgba(40, 40, 40, 0.55); color: #f2f2f2; }\n";
 
 int
