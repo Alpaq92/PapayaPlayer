@@ -889,7 +889,7 @@ ogg_chained(papaya_codec codec)
     dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
     ASSERT(dm != NULL);
     ASSERT_EQ(1, papaya_demux_stream_count(dm));
-    ASSERT(labs((long)(papaya_demux_duration(dm) - total)) < 30000 * LINKS);
+    ASSERT(labs((long)(papaya_demux_duration(dm) - total)) < 30000L * LINKS);
     pool = papaya_frame_pool_new();
     d = papaya_decoder_open(papaya_demux_stream(dm, 0), pool);
     ASSERT(d != NULL);
@@ -912,8 +912,8 @@ ogg_chained(papaya_codec codec)
         }
     }
     ASSERT_EQ(LINKS - 1, configs);
-    ASSERT(labs(samples - (long)rate * OGG_SECONDS * LINKS) < 4096 * LINKS);
-    ASSERT(crossings > (880 * OGG_SECONDS - 40) * LINKS && crossings < (880 * OGG_SECONDS + 40) * LINKS);
+    ASSERT(labs(samples - (long)rate * OGG_SECONDS * LINKS) < 4096L * LINKS);
+    ASSERT(crossings > (880L * OGG_SECONDS - 40) * LINKS && crossings < (880L * OGG_SECONDS + 40) * LINKS);
 
     /* The decoder has the last link's headers now. Back to the start: the
      * first link's again, then time 0. */
@@ -933,7 +933,6 @@ ogg_chained(papaya_codec codec)
     ASSERT(p->flags & PAPAYA_PACKET_CONFIG);
     ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
     papaya_packet_free(&p);
-    samples = 0;
     for (int got = 0; !got;) {
         ASSERT_EQ(0, papaya_demux_read(dm, &p));
         ASSERT(p->pts == PAPAYA_NOPTS || (p->pts <= total / 2 && p->pts > total / 2 - 1500000));

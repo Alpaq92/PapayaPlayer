@@ -80,7 +80,7 @@ frame_at(papaya_io *io, int64_t pos, const adts_header *first, adts_header *h, i
     return parse(b, &next) == 0 && next.rate_index == first->rate_index;
 }
 
-#define RESYNC_MAX (64 * 1024)
+#define RESYNC_MAX ((int64_t)64 * 1024)
 
 /* The next frame start after junk at pos, within RESYNC_MAX bytes, or -1. */
 static int64_t
@@ -144,7 +144,10 @@ adts_open(papaya_demuxer *d, papaya_io *io)
             int64_t again;
             uint8_t probe;
 
-            if (papaya_io_read_at(io, pos, &probe, 1) != 0 || (again = resync(io, pos, &first)) < 0)
+            if (papaya_io_read_at(io, pos, &probe, 1) != 0)
+                break;
+            again = resync(io, pos, &first);
+            if (again < 0)
                 break;
             pos = again;
             continue;
@@ -164,7 +167,7 @@ adts_open(papaya_demuxer *d, papaya_io *io)
         }
         c->offsets[c->count] = pos;
         c->starts[c->count] = total;
-        c->starts[++c->count] = total + 1024 * h.blocks;
+        c->starts[++c->count] = total + (int64_t)1024 * h.blocks;
         pos += h.size;
     }
     if (c->count == 0)

@@ -669,8 +669,8 @@ aac_gapless_in_m4a(int itunes)
     long samples = 0;
     int64_t first = PAPAYA_NOPTS;
 
-    for (int i = 0; i < AAC_N; i++)
-        pcm[2 * i] = pcm[2 * i + 1] = (short)(8000 * sin(2 * 3.14159265358979 * 440 * i / AAC_RATE));
+    for (size_t i = 0; i < AAC_N; i++)
+        pcm[2 * i] = pcm[2 * i + 1] = (short)(8000 * sin(2 * 3.14159265358979 * 440 * (double)i / AAC_RATE));
     ASSERT(aac_encode(2, 0, AAC_RATE, 2, 128000, pcm, AAC_N, add_unit, &u, asc, &asc_size) > 0);
     ASSERT(u.count < 256);
     build_m4a(&b, &u, asc, asc_size, itunes);

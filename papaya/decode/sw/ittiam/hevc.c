@@ -154,7 +154,8 @@ hevc_ue(hevc_bits *b)
     if (bit < 0)
         return -1;
     for (int i = 0; i < zeros; i++) {
-        if ((bit = hevc_bit(b)) < 0)
+        bit = hevc_bit(b);
+        if (bit < 0)
             return -1;
         v = v << 1 | bit;
     }

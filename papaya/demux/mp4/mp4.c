@@ -12,7 +12,6 @@
  * tfhd gives a base offset. Live, unbounded files come with HLS / DASH.
  *
  * Licensed under the Apache License, Version 2.0. */
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -685,8 +684,15 @@ parse_itunsmpb(mp4 *m, rd moov)
                     n = sizeof text - 1;
                 memcpy(text, part.p, n);
                 text[n] = 0;
-                if (sscanf(text, "%llx %llx %llx %llx", &field[0], &field[1], &field[2], &field[3]) != 4)
-                    return;
+                {
+                    char *at = text, *end;
+
+                    for (int f = 0; f < 4; f++, at = end) {
+                        field[f] = strtoull(at, &end, 16);
+                        if (end == at)
+                            return;
+                    }
+                }
                 /* The counts are output samples: twice the core rate with
                  * explicitly signalled SBR (HE-AAC, object type 5 or 29). */
                 if (asc && t->extradata_size >= 1 && ((asc[0] >> 3) == 5 || (asc[0] >> 3) == 29))
