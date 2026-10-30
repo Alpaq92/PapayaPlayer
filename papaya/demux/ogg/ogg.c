@@ -150,6 +150,108 @@ identify(lstream *s, const ogg_packet *op)
     }
 }
 
+/* Compares the first n characters, ignoring ASCII case. */
+static int
+strncasecmp_ascii(const char *a, const char *b, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        int x = (unsigned char)a[i], y = (unsigned char)b[i];
+
+        if (x >= 'a' && x <= 'z')
+            x -= 32;
+        if (y >= 'a' && y <= 'z')
+            y -= 32;
+        if (x != y)
+            return x - y;
+    }
+    return 0;
+}
+
+/* Base64 in place; the decoded size, or 0 if it is not base64. */
+static size_t
+unbase64(uint8_t *p, size_t n)
+{
+    size_t out = 0;
+    uint32_t acc = 0;
+    int bits = 0;
+
+    for (size_t i = 0; i < n && p[i] != '='; i++) {
+        int c = p[i], v = c >= 'A' && c <= 'Z' ? c - 'A'
+                        : c >= 'a' && c <= 'z' ? c - 'a' + 26
+                        : c >= '0' && c <= '9' ? c - '0' + 52
+                        : c == '+' ? 62 : c == '/' ? 63 : -1;
+
+        if (v < 0)
+            return 0;
+        acc = acc << 6 | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            p[out++] = (uint8_t)(acc >> bits);
+        }
+    }
+    return out;
+}
+
+static uint32_t
+le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* A header after the first: a cover in its comments
+ * (METADATA_BLOCK_PICTURE, or the older COVERART), or Ogg FLAC's PICTURE. */
+static void
+header_cover(papaya_demuxer *d, const lstream *s, const ogg_packet *op)
+{
+    const uint8_t *p = op->packet;
+    size_t n = (size_t)op->bytes, at, count;
+
+    if (s->codec == PAPAYA_CODEC_FLAC) {
+        if (n > 4 && (p[0] & 127) == 6)
+            papaya_demux_flac_picture(d, p + 4, n - 4);
+        at = n > 4 && (p[0] & 127) == 4 ? 4 : n; /* VORBIS_COMMENT */
+    } else if (s->codec == PAPAYA_CODEC_VORBIS && n > 7 && !memcmp(p, "\x03vorbis", 7)) {
+        at = 7;
+    } else if (s->codec == PAPAYA_CODEC_OPUS && n > 8 && !memcmp(p, "OpusTags", 8)) {
+        at = 8;
+    } else {
+        return;
+    }
+    if (n - at < 8 || le32(p + at) > n - at - 8)
+        return;
+    at += 4 + le32(p + at); /* vendor */
+    count = le32(p + at);
+    at += 4;
+    for (size_t i = 0; i < count && n - at >= 4; i++) {
+        size_t len = le32(p + at);
+        static const char pic[] = "METADATA_BLOCK_PICTURE=", art[] = "COVERART=";
+
+        at += 4;
+        if (len > n - at)
+            return;
+        for (int kind = 0; kind < 2; kind++) {
+            size_t name = kind ? sizeof art - 1 : sizeof pic - 1;
+            uint8_t *copy;
+
+            if (len <= name || strncasecmp_ascii((const char *)p + at, kind ? art : pic, name) != 0
+                || !(copy = malloc(len - name)))
+                continue;
+            memcpy(copy, p + at + name, len - name);
+            {
+                size_t got = unbase64(copy, len - name);
+
+                if (got && !kind)
+                    papaya_demux_flac_picture(d, copy, got);
+                else if (got)
+                    papaya_demux_set_cover(d, copy, got, 0);
+            }
+            free(copy);
+        }
+        at += len;
+    }
+}
+
 /* Vorbis: the three headers (back to back in extra), Xiph-laced. */
 static int
 lace_vorbis(lstream *s)
@@ -500,6 +602,7 @@ ogg_open(papaya_demuxer *d, papaya_io *io)
                     continue;
             } else {
                 s->skip++;
+                header_cover(d, s, &op);
             }
             if (s->codec == PAPAYA_CODEC_VORBIS) {
                 s->header_len[s->skip - 1] = (size_t)op.bytes;

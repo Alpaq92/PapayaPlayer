@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "FLAC/metadata.h"
 #include "FLAC/stream_encoder.h"
 #include "ogg/ogg.h"
 #include "opus.h"
@@ -826,6 +827,9 @@ flac_round_trip(int bits)
 
 #define OGG_SECONDS 4
 
+/* A FLAC PICTURE block (front cover, image/png, the bytes "oggcover") in
+ * base64, as Vorbis comments carry it. */
+#define OGG_PICTURE "METADATA_BLOCK_PICTURE=AAAAAwAAAAlpbWFnZS9wbmcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhvZ2djb3Zlcg=="
 /* Pages a packet into the file; flush pushes out the page at once. */
 static void
 ogg_put(ogg_stream_state *os, bytes *file, ogg_packet *op, int flush)
@@ -858,6 +862,7 @@ make_ogg_vorbis(bytes *file, int serial)
     vorbis_info_init(&vi);
     vorbis_encode_init_vbr(&vi, 2, RATE, 0.4f);
     vorbis_comment_init(&vc);
+    vorbis_comment_add(&vc, OGG_PICTURE);
     vorbis_analysis_init(&vd, &vi);
     vorbis_block_init(&vd, &vb);
     ogg_stream_init(&os, serial);
@@ -895,7 +900,8 @@ static void
 make_ogg_opus(bytes *file, int serial)
 {
     enum { FRAME = 960, PRESKIP = 312 };
-    static const unsigned char tags[] = { 'O', 'p', 'u', 's', 'T', 'a', 'g', 's', 0, 0, 0, 0, 0, 0, 0, 0 };
+    unsigned char tags[8 + 4 + 4 + 4 + sizeof OGG_PICTURE] = { 'O', 'p', 'u', 's', 'T', 'a', 'g', 's', 0, 0, 0, 0,
+                                                                1, 0, 0, 0, sizeof OGG_PICTURE - 1, 0, 0, 0 };
     unsigned char head[19] = { 'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 1, 2, PRESKIP & 255, PRESKIP >> 8,
                                0x80, 0xBB, 0, 0, 0, 0, 0 }; /* 48000 Hz, gain 0, family 0 */
     int err;
@@ -906,6 +912,7 @@ make_ogg_opus(bytes *file, int serial)
     static float pcm[FRAME * 2];
     unsigned char out[1500];
 
+    memcpy(tags + 20, OGG_PICTURE, sizeof OGG_PICTURE - 1);
     ogg_stream_init(&os, serial);
     memset(&op, 0, sizeof op);
     op.packet = head;
@@ -913,7 +920,7 @@ make_ogg_opus(bytes *file, int serial)
     op.b_o_s = 1;
     ogg_put(&os, file, &op, 1);
     op.packet = (unsigned char *)tags;
-    op.bytes = sizeof tags;
+    op.bytes = sizeof tags - 1;
     op.b_o_s = 0;
     op.packetno = 1;
     ogg_put(&os, file, &op, 1);
@@ -938,7 +945,15 @@ make_ogg_flac(bytes *file)
     static FLAC__int32 ch[N];
     const FLAC__int32 *chans[2] = { ch, ch };
     FLAC__StreamEncoder *enc = FLAC__stream_encoder_new();
+    /* the comment block given too: one libFLAC adds itself is left out of
+     * the Ogg header count */
+    FLAC__StreamMetadata *pic = FLAC__metadata_object_new(FLAC__METADATA_TYPE_PICTURE);
+    FLAC__StreamMetadata *meta[2] = { FLAC__metadata_object_new(FLAC__METADATA_TYPE_VORBIS_COMMENT), pic };
 
+    pic->data.picture.type = FLAC__STREAM_METADATA_PICTURE_TYPE_FRONT_COVER;
+    FLAC__metadata_object_picture_set_mime_type(pic, (char *)"image/png", true);
+    FLAC__metadata_object_picture_set_data(pic, (FLAC__byte *)"oggcover", 8, true);
+    FLAC__stream_encoder_set_metadata(enc, meta, 2);
     for (int i = 0; i < N; i++)
         ch[i] = (FLAC__int32)(tone(i, RATE) * 32767);
     FLAC__stream_encoder_set_channels(enc, 2);
@@ -949,6 +964,8 @@ make_ogg_flac(bytes *file)
     FLAC__stream_encoder_process(enc, chans, N);
     FLAC__stream_encoder_finish(enc);
     FLAC__stream_encoder_delete(enc);
+    FLAC__metadata_object_delete(meta[0]);
+    FLAC__metadata_object_delete(pic);
 }
 
 TEST
@@ -977,6 +994,7 @@ ogg_round_trip(papaya_codec codec)
     ASSERT(dm != NULL);
     ASSERT_STR_EQ("ogg", papaya_demux_name(dm));
     ASSERT_EQ(1, papaya_demux_stream_count(dm));
+    ASSERT(cover_is(dm, "oggcover"));
     s = papaya_demux_stream(dm, 0);
     ASSERT_EQ(codec, s->codec);
     ASSERT_EQ(rate, s->sample_rate);
