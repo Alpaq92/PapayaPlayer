@@ -5,6 +5,8 @@
  * first access unit, which it reads ahead of decoding without consuming.
  * libxaac's own flush resets most of its configuration, so a flush
  * builds a fresh decoder from the saved config instead, as Android does.
+ * Without an AudioSpecificConfig the packets carry their own headers (LOAS /
+ * LATM from MPEG-TS) and libxaac reads those instead.
  * Gapless: samples before time 0 (the encoder's priming, placed there by an
  * edit list or iTunSMPB) are dropped, and so are those from the stream's
  * gapless_end on. */
@@ -124,7 +126,7 @@ dec_open(xaac_dec *d, const uint8_t *config, size_t config_size)
     d->api = block(d, size, 4);
     if (!d->api || fatal(api(d, IA_API_CMD_INIT, IA_CMD_TYPE_INIT_API_PRE_CONFIG_PARAMS, NULL)))
         goto fail;
-    if (set(d, IA_XHEAAC_DEC_CONFIG_PARAM_MP4FLAG, 1) || set(d, IA_XHEAAC_DEC_CONFIG_PARAM_PCM_WDSZ, 16) ||
+    if (set(d, IA_XHEAAC_DEC_CONFIG_PARAM_MP4FLAG, config_size > 0) || set(d, IA_XHEAAC_DEC_CONFIG_PARAM_PCM_WDSZ, 16) ||
         set(d, IA_XHEAAC_DEC_CONFIG_PARAM_MAX_CHANNEL, 8) ||
         set(d, IA_XHEAAC_DEC_CONFIG_ERROR_CONCEALMENT, 1))
         goto fail;
@@ -157,6 +159,8 @@ dec_open(xaac_dec *d, const uint8_t *config, size_t config_size)
     if (!d->in || !d->out || config_size > (size_t)d->in_size)
         goto fail;
 
+    if (config_size == 0)
+        return 0; /* the first packet's headers start it */
     memcpy(d->in, config, config_size);
     if (init_with(d, (WORD32)config_size) != 0)
         goto fail;
@@ -171,7 +175,7 @@ aac_open(const papaya_stream_info *s, papaya_frame_pool *pool)
 {
     aac_ctx *c;
 
-    if (!s->extradata || s->extradata_size < 2)
+    if (s->extradata_size == 1 || (s->extradata_size && !s->extradata))
         return NULL;
     c = calloc(1, sizeof *c);
     if (!c)
@@ -179,10 +183,11 @@ aac_open(const papaya_stream_info *s, papaya_frame_pool *pool)
     c->pool = pool;
     c->next_pts = PAPAYA_NOPTS;
     c->gapless_end = s->gapless_end;
-    c->config = malloc(s->extradata_size);
+    c->config = malloc(s->extradata_size ? s->extradata_size : 1);
     if (!c->config)
         goto fail;
-    memcpy(c->config, s->extradata, s->extradata_size);
+    if (s->extradata_size)
+        memcpy(c->config, s->extradata, s->extradata_size);
     c->config_size = s->extradata_size;
     if (dec_open(&c->d, c->config, c->config_size) != 0)
         goto fail;

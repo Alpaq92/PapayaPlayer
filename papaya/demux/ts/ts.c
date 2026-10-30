@@ -1,21 +1,27 @@
 /* MPEG transport streams: .ts (188-byte packets) and Blu-ray / AVCHD .m2ts
- * (192: a 4-byte timecode first). The first program's PMT lists the
- * elementary streams; each one's PES packets are reassembled from its PID
+ * (192: a 4-byte timecode first). Every program's PMT lists its elementary
+ * streams; they become streams in program order (titled "Program N" when
+ * there are several), so a player taking the first video and audio plays
+ * the first program. Each stream's PES packets are reassembled from its PID
  * and leave as packets when the next one starts. H.264 and HEVC go out as
  * Annex B, a keyframe where an IDR / IRAP picture is; AAC arrives as ADTS
  * and leaves frame by frame with an AudioSpecificConfig from the first
- * header, as the AAC decoder wants it.
+ * header, as the AAC decoder wants it. AAC in LATM (LOAS frames, DVB) leaves
+ * frame by frame with its headers and no config: the decoder reads them. Its
+ * format comes from the first StreamMuxConfig (one program and layer).
  *
  * Times are the 90 kHz PTS / DTS, unwrapped (33 bits) and counted from the
  * first one in the file. The length comes from the last PTS near the end. A
  * seek bisects the file on PTS a little before the target, then drops
  * packets until a video keyframe. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "demux_internal.h"
 
 #define MAX_ES 16
+#define MAX_PROGRAMS 16
 #define PROBE_BYTES (8 << 20)   /* how far open looks for every stream's first PES */
 #define TAIL_BYTES (2 << 20)    /* how far from the end the length is looked for */
 #define WRAP ((int64_t)1 << 33)
@@ -30,9 +36,11 @@ typedef struct {
     uint8_t *pes;
     size_t len, cap;
     int open;                   /* a PES is being collected */
-    /* AAC: from the first ADTS header */
+    /* AAC: from the first ADTS header or StreamMuxConfig */
     int rate_index, profile, channels, rate;
+    int latm, out_rate;         /* LATM: frames keep their headers; rate after SBR */
     uint8_t asc[2];
+    int program;                /* its program number */
     int ready;                  /* everything open needed from this stream */
 } es;
 
@@ -40,7 +48,8 @@ typedef struct {
     papaya_io *io;
     int psize, skip;            /* packet size, bytes before the sync byte */
     int64_t first, pos, end;
-    int pmt_pid;
+    int pmt_pid[MAX_PROGRAMS], program[MAX_PROGRAMS], pmt_done[MAX_PROGRAMS];
+    int programs;
     es es[MAX_ES];
     int count;
     int64_t start90;            /* the first time in the file, -1 before */
@@ -138,12 +147,14 @@ parse_pat(ts *c, const uint8_t *d, int n)
     if (n < 8 || d[0] != 0x00)
         return;
     len = (d[1] & 15) << 8 | d[2];
-    for (int at = 8; at + 4 <= 3 + len - 4 && at + 4 <= n; at += 4) {
+    if (c->programs)
+        return; /* the first PAT's programs */
+    for (int at = 8; at + 4 <= 3 + len - 4 && at + 4 <= n && c->programs < MAX_PROGRAMS; at += 4) {
         int program = d[at] << 8 | d[at + 1];
 
-        if (program != 0) { /* the first program; 0 is the network PID */
-            c->pmt_pid = (d[at + 2] & 0x1F) << 8 | d[at + 3];
-            return;
+        if (program != 0) { /* 0 is the network PID */
+            c->program[c->programs] = program;
+            c->pmt_pid[c->programs++] = (d[at + 2] & 0x1F) << 8 | d[at + 3];
         }
     }
 }
@@ -158,7 +169,8 @@ codec_of(int type, const uint8_t *desc, int dlen, papaya_media_kind *kind)
     case 0x02: *kind = PAPAYA_MEDIA_VIDEO; return PAPAYA_CODEC_MPEG2;
     case 0x1B: *kind = PAPAYA_MEDIA_VIDEO; return PAPAYA_CODEC_H264;
     case 0x24: *kind = PAPAYA_MEDIA_VIDEO; return PAPAYA_CODEC_HEVC;
-    case 0x0F: return PAPAYA_CODEC_AAC;
+    case 0x0F:
+    case 0x11: return PAPAYA_CODEC_AAC; /* ADTS, LATM */
     case 0x03:
     case 0x04: return PAPAYA_CODEC_MP3;
     case 0x81: return PAPAYA_CODEC_AC3;
@@ -180,29 +192,38 @@ codec_of(int type, const uint8_t *desc, int dlen, papaya_media_kind *kind)
     }
 }
 
+/* Program k's PMT: its streams, once (a PID two programs share counts for
+ * the first). */
 static void
-parse_pmt(ts *c, const uint8_t *d, int n)
+parse_pmt(ts *c, int k, const uint8_t *d, int n)
 {
     int ptr = d[0], len, info;
 
     d += 1 + ptr;
     n -= 1 + ptr;
-    if (n < 12 || d[0] != 0x02 || c->count)
+    if (n < 12 || d[0] != 0x02 || c->pmt_done[k] || (d[3] << 8 | d[4]) != c->program[k])
         return;
+    c->pmt_done[k] = 1;
     len = (d[1] & 15) << 8 | d[2];
     info = (d[10] & 15) << 8 | d[11];
     for (int at = 12 + info; at + 5 <= 3 + len - 4 && at + 5 <= n && c->count < MAX_ES;) {
         int type = d[at], pid = (d[at + 1] & 0x1F) << 8 | d[at + 2];
         int dlen = (d[at + 3] & 15) << 8 | d[at + 4];
         es *e = &c->es[c->count];
+        const uint8_t *desc = d + at + 5;
+        int desc_ok = at + 5 + dlen <= n;
 
+        at += 5 + dlen;
+        if (find(c, pid))
+            continue;
         memset(e, 0, sizeof *e);
         e->pid = pid;
         e->stream = -1;
-        e->codec = codec_of(type, d + at + 5, at + 5 + dlen <= n ? dlen : 0, &e->kind);
+        e->program = c->program[k];
+        e->latm = type == 0x11;
+        e->codec = codec_of(type, desc, desc_ok ? dlen : 0, &e->kind);
         if (e->codec != PAPAYA_CODEC_UNKNOWN)
             c->count++;
-        at += 5 + dlen;
     }
 }
 
@@ -306,6 +327,84 @@ adts_header(const uint8_t *h, size_t n, int *size, int *head, es *e)
     return 0;
 }
 
+/* ---- LATM (ISO/IEC 14496-3 1.7) ---------------------------------------------- */
+
+typedef struct {
+    const uint8_t *p;
+    size_t n, bit;
+} bits;
+
+static uint32_t
+get(bits *b, int count)
+{
+    uint32_t v = 0;
+
+    while (count-- > 0) {
+        int bit = 0;
+
+        if (b->bit < b->n * 8)
+            bit = b->p[b->bit / 8] >> (7 - b->bit % 8) & 1;
+        b->bit++;
+        v = v << 1 | (uint32_t)bit;
+    }
+    return v;
+}
+
+static uint32_t
+latm_value(bits *b)
+{
+    uint32_t n = get(b, 2), v = 0;
+
+    for (uint32_t i = 0; i <= n; i++)
+        v = v << 8 | get(b, 8);
+    return v;
+}
+
+static const int aac_rates[13] = { 96000, 88200, 64000, 48000, 44100, 32000, 24000,
+                                   22050, 16000, 12000, 11025, 8000, 7350 };
+
+static int
+rate_of(bits *b)
+{
+    uint32_t i = get(b, 4);
+
+    return i == 15 ? (int)get(b, 24) : i < 13 ? aac_rates[i] : 0;
+}
+
+/* A LOAS frame's AudioMuxElement (after the 3-byte sync and length): the
+ * format from its StreamMuxConfig, if it carries one. 0 when found. */
+static int
+latm_config(const uint8_t *p, size_t n, es *e)
+{
+    bits b = { p, n, 0 };
+    uint32_t version, aot, config;
+
+    if (get(&b, 1)) /* useSameStreamMux */
+        return -1;
+    version = get(&b, 1);
+    if (version && get(&b, 1)) /* audioMuxVersionA: reserved */
+        return -1;
+    if (version)
+        latm_value(&b); /* taraBufferFullness */
+    get(&b, 1 + 6);     /* allStreamsSameTimeFraming, numSubFrames */
+    if (get(&b, 4) != 0 || get(&b, 3) != 0)
+        return -1;      /* more than one program or layer */
+    if (version)
+        latm_value(&b); /* ascLen */
+    aot = get(&b, 5);
+    if (aot == 31)
+        aot = 32 + get(&b, 6);
+    e->rate = rate_of(&b);
+    config = get(&b, 4);
+    e->out_rate = e->rate;
+    if (aot == 5 || aot == 29)
+        e->out_rate = rate_of(&b); /* explicit SBR */
+    if (b.bit > n * 8 || e->rate <= 0 || e->out_rate <= 0 || config < 1 || config > 7)
+        return -1;
+    e->channels = config == 7 ? 8 : (int)config;
+    return 0;
+}
+
 static void
 push(ts *c, papaya_packet *p)
 {
@@ -339,6 +438,31 @@ finish_pes(ts *c, es *e, int probing)
     n -= hl;
     if (probing && pts != PAPAYA_NOPTS && c->start90 < 0)
         c->start90 = dts != PAPAYA_NOPTS ? dts : pts; /* the file's first time */
+    if (e->codec == PAPAYA_CODEC_AAC && e->latm) {
+        int i = 0;
+
+        for (size_t at = 0; at + 3 <= n && data[at] == 0x56 && (data[at + 1] & 0xE0) == 0xE0; i++) {
+            size_t size = 3 + (size_t)((data[at + 1] & 0x1F) << 8 | data[at + 2]);
+            papaya_packet *out;
+
+            if (size > n - at)
+                break;
+            if (!e->ready && latm_config(data + at + 3, size - 3, e) == 0)
+                e->ready = 1;
+            if (e->ready && !probing && e->stream >= 0) { /* frames before a config are no use */
+                out = papaya_packet_new(data + at, size);
+                if (!out)
+                    return;
+                out->stream = e->stream;
+                out->flags |= PAPAYA_PACKET_KEY;
+                out->pts = out->dts = pts == PAPAYA_NOPTS ? PAPAYA_NOPTS
+                                                          : to_us(c, pts + (int64_t)i * 1024 * 90000 / e->rate);
+                push(c, out);
+            }
+            at += size;
+        }
+        return;
+    }
     if (e->codec == PAPAYA_CODEC_AAC) {
         int size, head, i = 0;
 
@@ -393,11 +517,12 @@ take(ts *c, const uint8_t p[188], int probing)
             parse_pat(c, d, len);
         return;
     }
-    if (pid == c->pmt_pid && c->pmt_pid) {
-        if (start)
-            parse_pmt(c, d, len);
-        return;
-    }
+    for (int k = 0; k < c->programs; k++)
+        if (pid == c->pmt_pid[k]) {
+            if (start)
+                parse_pmt(c, k, d, len);
+            return;
+        }
     e = find(c, pid);
     if (!e)
         return;
@@ -500,9 +625,13 @@ ts_open(papaya_demuxer *d, papaya_io *io)
     /* The tables, then every stream's first PES (AAC's config is in it). */
     limit = c->end < PROBE_BYTES ? c->end : PROBE_BYTES;
     while (c->pos < limit && next_packet(c, p)) {
-        int all = c->count > 0;
+        int all;
 
         take(c, p, 1);
+        all = c->count > 0;
+        for (int k = 0; k < c->programs; k++)
+            if (!c->pmt_done[k])
+                all = 0;
         for (int i = 0; i < c->count; i++)
             if (!c->es[i].ready)
                 all = 0;
@@ -524,11 +653,16 @@ ts_open(papaya_demuxer *d, papaya_io *io)
         s->codec = e->codec;
         s->codec_tag = "MPEG-TS";
         if (e->codec == PAPAYA_CODEC_AAC) {
-            s->sample_rate = e->rate;
+            s->sample_rate = e->latm ? e->out_rate : e->rate;
             s->channels = e->channels;
-            s->extradata = e->asc;
-            s->extradata_size = sizeof e->asc;
+            s->codec_tag = e->latm ? "LATM" : "MPEG-TS";
+            if (!e->latm) {
+                s->extradata = e->asc;
+                s->extradata_size = sizeof e->asc;
+            }
         }
+        if (c->programs > 1)
+            snprintf(s->title, sizeof s->title, "Program %d", e->program);
         if (e->kind == PAPAYA_MEDIA_VIDEO)
             s->color.primaries = s->color.transfer = s->color.matrix = 2; /* from the bitstream */
         e->stream = s->index;

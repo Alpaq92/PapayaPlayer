@@ -367,10 +367,146 @@ ts_round_trip(int m2ts)
     PASS();
 }
 
+/* ---- LATM, and a file whose first program is empty ---------------------- */
+
+typedef struct {
+    buf b;
+    uint32_t acc;
+    int n;
+} bitw;
+
+static void
+bw(bitw *w, uint32_t v, int bits)
+{
+    while (bits-- > 0) {
+        w->acc = w->acc << 1 | (v >> bits & 1);
+        if (++w->n == 8) {
+            uint8_t c = (uint8_t)w->acc;
+
+            put(&w->b, &c, 1);
+            w->acc = 0;
+            w->n = 0;
+        }
+    }
+}
+
+/* One AAC access unit as a LOAS frame: an AudioMuxElement with its
+ * StreamMuxConfig (version 0, one program and layer) every time. */
+static void
+loas(buf *out, const uint8_t *asc, int asc_bits, const uint8_t *au, size_t n)
+{
+    bitw w = { { 0 }, 0, 0 };
+    uint8_t h[3];
+    size_t len;
+
+    bw(&w, 0, 1);  /* useSameStreamMux: no, a config follows */
+    bw(&w, 0, 1);  /* audioMuxVersion */
+    bw(&w, 1, 1);  /* allStreamsSameTimeFraming */
+    bw(&w, 0, 6);  /* numSubFrames - 1 */
+    bw(&w, 0, 4);  /* numProgram - 1 */
+    bw(&w, 0, 3);  /* numLayer - 1 */
+    for (int i = 0; i < asc_bits; i++)
+        bw(&w, asc[i / 8] >> (7 - i % 8) & 1, 1);
+    bw(&w, 0, 3);  /* frameLengthType: lengths in bytes */
+    bw(&w, 0xFF, 8);
+    bw(&w, 0, 1);  /* otherDataPresent */
+    bw(&w, 0, 1);  /* crcCheckPresent */
+    for (len = n; len >= 255; len -= 255)
+        bw(&w, 255, 8);
+    bw(&w, (uint32_t)len, 8);
+    for (size_t i = 0; i < n; i++)
+        bw(&w, au[i], 8);
+    if (w.n)
+        bw(&w, 0, 8 - w.n);
+    h[0] = 0x56;
+    h[1] = (uint8_t)(0xE0 | w.b.size >> 8);
+    h[2] = (uint8_t)w.b.size;
+    put(out, h, 3);
+    put(out, w.b.data, w.b.size);
+    free(w.b.data);
+}
+
+TEST
+ts_latm_second_program(void)
+{
+    enum { RATE = 48000, N = RATE * 4 };
+    static short pcm[N * 2];
+    unsigned char config[64];
+    int config_size = 0, frames;
+    buf aus = { 0 };
+    mux m;
+    size_t at = 0;
+    papaya_demuxer *dm;
+    const papaya_stream_info *s;
+    papaya_frame_pool *pool;
+    papaya_decoder *d;
+    papaya_packet *p;
+    papaya_frame *f;
+    long samples = 0;
+    /* Program 1 has nothing playable; program 2 has LATM audio. */
+    uint8_t pat[] = { 0x00, 0, 0, 0, 1, 0xC1, 0, 0, 0, 1, 0xE0 | 0x10, 0x00, 0, 2, 0xE0 | 0x10, 0x01 };
+    uint8_t pmt1[] = { 0x02, 0, 0, 0, 1, 0xC1, 0, 0, 0xFF, 0xFF, 0xF0, 0 };
+    uint8_t pmt2[] = { 0x02, 0, 0, 0, 2, 0xC1, 0, 0, 0xE0 | AUDIO_PID >> 8, AUDIO_PID & 255, 0xF0, 0,
+                       0x11, 0xE0 | AUDIO_PID >> 8, AUDIO_PID & 255, 0xF0, 0 };
+
+    for (size_t i = 0; i < N; i++)
+        pcm[2 * i] = pcm[2 * i + 1] = (short)(12000 * sin(2 * 3.14159265358979 * 440 * (double)i / RATE));
+    frames = aac_encode(2, 0, RATE, 2, 128000, pcm, N, gather, &aus, config, &config_size);
+    ASSERT(frames > 100);
+    ASSERT_EQ(2, config_size); /* AAC-LC's 16 bits, copied bit by bit below */
+    memset(&m, 0, sizeof m);
+    for (int a = 0; a < frames; a++) {
+        uint32_t n;
+        buf frame = { 0 };
+
+        if (a % 20 == 0) {
+            section(&m, 0, pat, sizeof pat);
+            section(&m, 0x1000, pmt1, sizeof pmt1);
+            section(&m, 0x1001, pmt2, sizeof pmt2);
+        }
+        memcpy(&n, aus.data + at, sizeof n);
+        loas(&frame, config, 16, aus.data + at + 4, n);
+        pes(&m, AUDIO_PID, 0xC0, 90000 + (int64_t)a * 1920, frame.data, frame.size);
+        free(frame.data);
+        at += 4 + n;
+    }
+
+    dm = papaya_demux_open(papaya_io_open_memory(m.out.data, m.out.size));
+    ASSERT(dm != NULL);
+    ASSERT_EQ(1, papaya_demux_stream_count(dm));
+    s = papaya_demux_stream(dm, 0);
+    ASSERT_EQ(PAPAYA_CODEC_AAC, s->codec);
+    ASSERT_STR_EQ("LATM", s->codec_tag);
+    ASSERT_STR_EQ("Program 2", s->title);
+    ASSERT_EQ(RATE, s->sample_rate);
+    ASSERT_EQ(2, s->channels);
+    pool = papaya_frame_pool_new();
+    d = papaya_decoder_open(s, pool);
+    ASSERT(d != NULL);
+    while (papaya_demux_read(dm, &p) == 0) {
+        ASSERT_EQ(PAPAYA_DECODE_OK, papaya_decoder_send(d, p));
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            ASSERT_EQ(RATE, f->sample_rate);
+            ASSERT_EQ(2, f->channels);
+            samples += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    ASSERT(samples > (long)(frames - 3) * 1024 && samples <= (long)frames * 1024);
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    free(m.out.data);
+    free(aus.data);
+    PASS();
+}
+
 SUITE(ts)
 {
     RUN_TEST1(ts_round_trip, 0); /* .ts */
     RUN_TEST1(ts_round_trip, 1); /* .m2ts */
+    RUN_TEST(ts_latm_second_program);
 }
 
 GREATEST_MAIN_DEFS();
