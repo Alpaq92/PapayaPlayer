@@ -143,8 +143,8 @@ p { margin: 0; }
 .audio2 { background: linear-gradient(160deg, #1d161b, #0e0c10 60%); }
 .music { position: absolute; left: 0; right: 0; top: 0; bottom: 64px; display: grid; grid-template-columns: 150px 1fr;
   gap: 22px; padding: 22px; align-items: center; }
-.drawer { position: absolute; top: 0; right: 0; bottom: 64px; width: 42%; background: rgba(23,21,26,.97);
-  border-left: 1px solid var(--line); font-size: 13.5px; overflow: hidden; }
+.drawer { position: absolute; right: 74px; bottom: 72px; width: min(380px, 60%); background: rgba(24,22,27,.94);
+  border: 1px solid var(--line); border-radius: 10px; font-size: 13.5px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
 .drawer > div { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; padding: 8px 14px; color: var(--mute); }
 .drawer > div + div { border-top: 1px solid #221f25; }
 .drawer .drawer-head { grid-template-columns: 1fr auto; color: var(--ink); font-weight: 600; }
@@ -154,10 +154,9 @@ p { margin: 0; }
 .btn.on { background: rgba(255,122,69,.18); }
 .btn.on .icon { fill: var(--papaya); }
 
-/* settings panel */
-.frame.dimmed { filter: brightness(.45); }
-.panel { position: absolute; top: 0; right: 0; bottom: 0; width: 62%; background: rgba(23,21,26,.97); border-left: 1px solid var(--line);
-  display: grid; grid-template-rows: auto 1fr; }
+/* settings, floating above the options button */
+.panel { position: absolute; right: 8px; bottom: 72px; width: min(380px, calc(100% - 16px)); background: rgba(24,22,27,.94);
+  border: 1px solid var(--line); border-radius: 10px; display: grid; grid-template-rows: auto 1fr; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
 .tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--line); overflow-x: auto; font-size: 13px; }
 .tabs span { padding: 5px 10px; border-radius: 8px; color: var(--mute); white-space: nowrap; }
 .tabs .on { background: var(--raise); color: var(--ink); }
@@ -169,7 +168,7 @@ p { margin: 0; }
   .player { grid-template-columns: 1fr; }
   .music { grid-template-columns: 90px 1fr; }
   .music .art { width: 90px; height: 90px; }
-  .drawer, .panel { width: 100%; }
+  .drawer, .panel { right: 8px; width: calc(100% - 16px); }
   .side { border-right: 0; border-bottom: 1px solid var(--line); grid-auto-flow: column; overflow-x: auto; }
   .hide-narrow { display: none; }
 }
@@ -320,11 +319,11 @@ p { margin: 0; }
       <ul>
         <li>The same control bar as video, in the same order, so both feel like one player. Picture-in-picture gives way to the playlist button.</li>
         <li>Above the bar: album art, artist and title, and the visualiser.</li>
-        <li>The playlist slides out from the right over the music area; the current track is marked with an accent edge. Shown open here.</li>
+        <li>The playlist floats in a box above its button, over the music area; the current track is marked with an accent edge. A click outside, the button again or Escape closes it. Shown open here.</li>
         <li>Shown whenever the file has no video.</li>
       </ul>
       <h3>Reaktor today</h3>
-      <p><span class="tag ok">ready</span> the bar (it is screen 01's), list rows, images for the art, a panel that slides by moving its box.</p>
+      <p><span class="tag ok">ready</span> the bar (it is screen 01's), list rows, images for the art, a filled, rounded box over the picture.</p>
       <p><span class="tag work">needs work</span> the visualiser bars (cavacore + our drawing) and their gradient.</p>
     </div>
   </section>
@@ -351,30 +350,37 @@ p { margin: 0; }
 
   <!-- 5 -->
   <section class="screen" aria-labelledby="s5">
-    <div class="head"><span class="num">05</span><h2 id="s5">Settings panel</h2></div>
+    <div class="head"><span class="num">05</span><h2 id="s5">Settings</h2></div>
     <div class="win">
-      <div class="frame dimmed"></div>
+      <div class="frame"></div>
       <aside class="panel" aria-label="Settings">
-        <div class="tabs"><span class="on">Playback</span><span>Video</span><span>Audio</span><span>Subtitles</span><span>Visualiser</span><span>Window</span></div>
+        <div class="tabs"><span class="on">Playback</span><span>Visualiser</span><span>Window</span></div>
         <div class="pane">
           <div class="field"><span>Controls style<small>Screens 01 and 02.</small></span><span class="seg"><span class="on">Minimal</span><span>Accent</span></span></div>
           <div class="field"><span>Play the next file at the end<small>Moves on through the folder.</small></span><span class="toggle"></span></div>
-          <div class="field"><span>Resume where I left off<small>Per file, kept for 90 days.</small></span><span class="toggle off"></span></div>
-          <div class="field"><span>Skip step<small>The ± buttons and J / L.</small></span><span class="seg"><span>5 s</span><span class="on">10 s</span><span>30 s</span></span></div>
-          <div class="field"><span>Default speed</span><span class="seg"><span>0.75×</span><span class="on">1×</span><span>1.5×</span></span></div>
         </div>
       </aside>
+      <div class="bottom">
+        <div class="seek"><div class="fill"></div><div class="thumb"></div></div>
+        <div class="row">
+          <div class="btn play"><svg class="icon sm"><use href="#i-pause"/></svg></div>
+          <span class="txt">1:42 <span class="dim">/ 4:28</span></span>
+          <span class="spacer"></span>
+          <div class="btn"><svg class="icon sm"><use href="#i-full"/></svg></div>
+          <div class="btn on"><svg class="icon sm"><use href="#i-opts"/></svg></div>
+        </div>
+      </div>
     </div>
     <div class="notes">
       <h3>What it is</h3>
       <ul>
-        <li>A full-height panel inside the main window, opened by the options button; the video dims and keeps playing behind it.</li>
-        <li>Tabs by topic across the top; the controls style switch is the first setting.</li>
+        <li>A floating box above the options button at the far right; the video keeps playing, undimmed, around it.</li>
+        <li>Tabs by topic across the top (Playback, Visualiser, Window); the controls style switch is the first setting.</li>
         <li>Today's two settings (title bar, next file) move here; the quick popup on the options button keeps speed, tracks and subtitles.</li>
-        <li>Escape or a click outside closes it.</li>
+        <li>Escape, a click outside or the options button again closes it. Settings and the playlist are never open together.</li>
       </ul>
       <h3>Reaktor today</h3>
-      <p><span class="tag ok">ready</span> tabs, toggles, segmented selects, a filled panel over the video.</p>
+      <p><span class="tag ok">ready</span> tabs, toggles, segmented selects, a filled, rounded box over the video.</p>
     </div>
   </section>
 
@@ -385,9 +391,9 @@ p { margin: 0; }
       <li><b>Audio:</b> the same control bar as video, with art, title and visualiser above it (03).</li>
       <li><b>Gradients:</b> from Reaktor's CSS; the request is written up for Reaktor.</li>
       <li><b>Accent colour:</b> papaya orange, with the guava-pink gradient.</li>
-      <li><b>Playlist:</b> a slide-out panel (03).</li>
+      <li><b>Playlist:</b> a floating box above its button (03); first a slide-out panel, changed back.</li>
       <li><b>Visualiser:</b> bars by default; the other styles and colour sources selectable (04).</li>
-      <li><b>Settings:</b> a panel inside the main window (05).</li>
+      <li><b>Settings:</b> a floating box above the options button (05); first a panel, changed back.</li>
     </ol>
   </section>
 </main>
