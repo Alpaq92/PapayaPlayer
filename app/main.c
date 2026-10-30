@@ -339,7 +339,10 @@ load_cover(void)
     const uint8_t *data = papaya_player_cover(ui.player, &size);
     plutovg_surface_t *s;
 
-    if (!data || size > INT32_MAX || !(s = plutovg_surface_load_from_image_data(data, (int)size)))
+    if (!data || size > INT32_MAX)
+        return;
+    s = plutovg_surface_load_from_image_data(data, (int)size);
+    if (!s)
         return;
     ui.cover_w = plutovg_surface_get_width(s);
     ui.cover_h = plutovg_surface_get_height(s);
@@ -1159,7 +1162,9 @@ draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
     float dt = ui.vis_at ? (float)(now - ui.vis_at) / 1e6f : 0.0f, step = r.w / (float)VIS_BANDS, rest = 0.0f;
     int rate = 0;
 
-    if (!ui.vis && !(ui.vis = papaya_spectrum_new(VIS_BANDS)))
+    if (!ui.vis)
+        ui.vis = papaya_spectrum_new(VIS_BANDS);
+    if (!ui.vis)
         return;
     if (dt > 0.25f)
         dt = 0.25f;

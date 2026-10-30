@@ -174,7 +174,10 @@ papaya_demux_id3_cover(papaya_demuxer *d, papaya_io *io, int64_t pos)
         return;
     version = h[3];
     size = (size_t)(h[6] & 127) << 21 | (size_t)(h[7] & 127) << 14 | (size_t)(h[8] & 127) << 7 | (h[9] & 127);
-    if (version < 2 || version > 4 || !size || size > MAX_COVER || !(tag = malloc(size)))
+    if (version < 2 || version > 4 || !size || size > MAX_COVER)
+        return;
+    tag = malloc(size);
+    if (!tag)
         return;
     if (papaya_io_read_at(io, pos + 10, tag, size) != 0)
         goto done;

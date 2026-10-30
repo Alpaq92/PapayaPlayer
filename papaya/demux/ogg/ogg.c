@@ -234,8 +234,10 @@ header_cover(papaya_demuxer *d, const lstream *s, const ogg_packet *op)
             size_t name = kind ? sizeof art - 1 : sizeof pic - 1;
             uint8_t *copy;
 
-            if (len <= name || strncasecmp_ascii((const char *)p + at, kind ? art : pic, name) != 0
-                || !(copy = malloc(len - name)))
+            if (len <= name || strncasecmp_ascii((const char *)p + at, kind ? art : pic, name) != 0)
+                continue;
+            copy = malloc(len - name);
+            if (!copy)
                 continue;
             memcpy(copy, p + at + name, len - name);
             {

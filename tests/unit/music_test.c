@@ -576,6 +576,21 @@ put_be(small *b, uint32_t v, int n)
         b->data[b->size++] = (uint8_t)(v >> (8 * i));
 }
 
+/* Appends n bytes to file; aborts the test run if memory runs out. */
+static void
+grow(bytes *file, const void *p, size_t n)
+{
+    uint8_t *grown = realloc(file->data, file->size + n);
+
+    if (!grown) {
+        free(file->data);
+        abort();
+    }
+    memcpy(grown + file->size, p, n);
+    file->data = grown;
+    file->size += n;
+}
+
 /* An ID3v2 frame: id, size (syncsafe in v2.4), flags, then body. */
 static void
 id3_frame(small *tag, int version, const char *id, const small *body, int flags)
@@ -599,10 +614,8 @@ id3_header(bytes *file, int version, const small *tag)
     uint8_t h[10] = { 'I', 'D', '3', (uint8_t)version, 0, 0, 0, 0, (uint8_t)(tag->size >> 7 & 127),
                       (uint8_t)(tag->size & 127) };
 
-    file->data = realloc(file->data, file->size + 10 + tag->size);
-    memcpy(file->data + file->size, h, 10);
-    memcpy(file->data + file->size + 10, tag->data, tag->size);
-    file->size += 10 + tag->size;
+    grow(file, h, 10);
+    grow(file, tag->data, tag->size);
 }
 
 static int
@@ -622,6 +635,7 @@ mp3_cover(void)
     char path[1024];
     size_t mp3_size;
     uint8_t *mp3;
+    int bad = 0; /* checked at the end, once everything is freed */
 
     snprintf(path, sizeof path, "%s/l3-si.bit", MINIMP3_VECTORS);
     mp3 = slurp(path, &mp3_size);
@@ -647,15 +661,14 @@ mp3_cover(void)
         }
         put_bytes(&tag, "\0\0\0\0\0\0\0\0\0\0", 10); /* padding */
         id3_header(&file, version, &tag);
-        file.data = realloc(file.data, file.size + mp3_size);
-        memcpy(file.data + file.size, mp3, mp3_size);
-        file.size += mp3_size;
+        grow(&file, mp3, mp3_size);
         dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
-        ASSERT(dm != NULL);
-        ASSERT_STR_EQ("mp3", papaya_demux_name(dm));
-        ASSERTm("front cover", cover_is(dm, "front"));
-        ASSERT_EQ(0, papaya_demux_read(dm, &p));
-        papaya_packet_free(&p);
+        if (!dm || strcmp(papaya_demux_name(dm), "mp3") != 0 || !cover_is(dm, "front"))
+            bad++;
+        else if (papaya_demux_read(dm, &p) != 0)
+            bad++;
+        else
+            papaya_packet_free(&p);
         papaya_demux_close(&dm);
         /* cut anywhere in the tag: no crash, no stray picture */
         for (size_t cut = 1; cut < 10 + tag.size; cut += 7) {
@@ -677,11 +690,9 @@ mp3_cover(void)
         put_bytes(&body, "\xff\x00\xd8\xff\x00\xe0jpeg", 10);
         id3_frame(&tag, 4, "APIC", &body, 0x02);
         id3_header(&file, 4, &tag);
-        file.data = realloc(file.data, file.size + mp3_size);
-        memcpy(file.data + file.size, mp3, mp3_size);
-        file.size += mp3_size;
+        grow(&file, mp3, mp3_size);
         dm = papaya_demux_open(papaya_io_open_memory(file.data, file.size));
-        ASSERT(cover_is(dm, "\xff\xd8\xff\xe0jpeg"));
+        bad += !cover_is(dm, "\xff\xd8\xff\xe0jpeg");
         papaya_demux_close(&dm);
         free(file.data);
     }
@@ -690,12 +701,11 @@ mp3_cover(void)
         papaya_demuxer *dm = papaya_demux_open(papaya_io_open_memory(mp3, mp3_size));
         size_t n;
 
-        ASSERT(dm != NULL);
-        ASSERT(papaya_demux_cover(dm, &n) == NULL);
-        ASSERT_EQ(0, (int)n);
+        bad += !dm || papaya_demux_cover(dm, &n) != NULL || n != 0;
         papaya_demux_close(&dm);
     }
     free(mp3);
+    ASSERT_EQ(0, bad);
     PASS();
 }
 
