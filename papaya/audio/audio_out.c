@@ -19,7 +19,8 @@ struct papaya_audio_out {
     papaya_queue *frames;
     papaya_clock *clock;
     int channels, rate;
-    int64_t latency;
+    int started;           /* device is initialised */
+    _Atomic int64_t latency;
     char name[256];
 
     /* Touched only by the device callback. */
@@ -116,12 +117,39 @@ on_data(ma_device *device, void *output, const void *input, ma_uint32 count)
         papaya_clock_set_at(ao->clock, first_pts - ao->latency, clock_serial, now);
 }
 
+/* The device for ao's rate and channels, started. */
+static int
+start_device(papaya_audio_out *ao)
+{
+    ma_device_config dc = ma_device_config_init(ma_device_type_playback);
+
+    dc.playback.format = ma_format_f32;
+    dc.playback.channels = (ma_uint32)ao->channels;
+    dc.sampleRate = (ma_uint32)ao->rate;
+    dc.dataCallback = on_data;
+    dc.pUserData = ao;
+    dc.performanceProfile = ma_performance_profile_low_latency;
+    /* Our frames are WAVE order; miniaudio's default map for these counts
+     * is the same, and it remaps if the device differs. */
+    if (ma_device_init(&ao->context, &dc, &ao->device) != MA_SUCCESS)
+        return -1;
+    atomic_store(&ao->latency, (int64_t)ao->device.playback.internalPeriodSizeInFrames
+                                   * ao->device.playback.internalPeriods * 1000000
+                                   / (ao->device.playback.internalSampleRate ? ao->device.playback.internalSampleRate
+                                                                             : 48000));
+    if (ma_device_start(&ao->device) != MA_SUCCESS) {
+        ma_device_uninit(&ao->device);
+        return -1;
+    }
+    ao->started = 1;
+    return 0;
+}
+
 papaya_audio_out *
 papaya_audio_out_open(const papaya_audio_out_config *config)
 {
     papaya_audio_out *ao;
     ma_backend null_backend = ma_backend_null;
-    ma_device_config dc;
     ma_device_info *playback;
     ma_uint32 playback_count = 0;
     int64_t buffer = config->buffer_duration > 0 ? config->buffer_duration : 300000;
@@ -142,30 +170,14 @@ papaya_audio_out_open(const papaya_audio_out_config *config)
                         NULL, &ao->context) != MA_SUCCESS)
         goto fail_queue;
 
-    dc = ma_device_config_init(ma_device_type_playback);
-    dc.playback.format = ma_format_f32;
-    dc.playback.channels = (ma_uint32)config->channels;
-    dc.sampleRate = (ma_uint32)config->sample_rate;
-    dc.dataCallback = on_data;
-    dc.pUserData = ao;
-    dc.performanceProfile = ma_performance_profile_low_latency;
-    /* Our frames are WAVE order; miniaudio's default map for these counts
-     * is the same, and it remaps if the device differs. */
-    if (ma_device_init(&ao->context, &dc, &ao->device) != MA_SUCCESS)
+    if (start_device(ao) != 0)
         goto fail_context;
-    ao->latency = (int64_t)ao->device.playback.internalPeriodSizeInFrames
-                  * ao->device.playback.internalPeriods * 1000000
-                  / (ao->device.playback.internalSampleRate ? ao->device.playback.internalSampleRate : 48000);
     if (ma_context_get_devices(&ao->context, &playback, &playback_count, NULL, NULL) == MA_SUCCESS
         && playback_count)
         ma_device_get_name(&ao->device, ma_device_type_playback, ao->name, sizeof ao->name, NULL);
     if (!ao->name[0])
         snprintf(ao->name, sizeof ao->name, "%s", config->null_device ? "null" : "default");
-    if (ma_device_start(&ao->device) != MA_SUCCESS)
-        goto fail_device;
     return ao;
-fail_device:
-    ma_device_uninit(&ao->device);
 fail_context:
     ma_context_uninit(&ao->context);
 fail_queue:
@@ -184,7 +196,8 @@ papaya_audio_out_close(papaya_audio_out **pao)
     if (!ao)
         return;
     papaya_queue_abort(ao->frames);
-    ma_device_uninit(&ao->device);
+    if (ao->started)
+        ma_device_uninit(&ao->device);
     ma_context_uninit(&ao->context);
     papaya_frame_unref(&ao->current);
     papaya_queue_free(&ao->frames);
@@ -202,9 +215,23 @@ papaya_audio_out_write(papaya_audio_out *ao, papaya_frame *frame, int serial)
 {
     queued *q;
 
-    if (frame->kind != PAPAYA_MEDIA_AUDIO || frame->sample != PAPAYA_SAMPLE_F32
-        || frame->channels != ao->channels || frame->sample_rate != ao->rate)
+    if (frame->kind != PAPAYA_MEDIA_AUDIO || frame->sample != PAPAYA_SAMPLE_F32 || frame->channels < 1
+        || frame->channels > 8 || frame->sample_rate <= 0)
         return -1;
+    if (frame->channels != ao->channels || frame->sample_rate != ao->rate) {
+        /* The decoder knows better than the container (HE-AAC's SBR and PS
+         * double the rate or the channels): a device for the frames. What is
+         * queued in the old format goes; at the start there is nothing. */
+        if (ao->started)
+            ma_device_uninit(&ao->device);
+        ao->started = 0;
+        papaya_frame_unref(&ao->current); /* the callback has stopped */
+        papaya_queue_flush(ao->frames);
+        ao->channels = frame->channels;
+        ao->rate = frame->sample_rate;
+        if (start_device(ao) != 0)
+            return -1;
+    }
     q = malloc(sizeof *q);
     if (!q)
         return -1;
@@ -254,5 +281,5 @@ papaya_audio_out_queued(papaya_audio_out *ao)
 int64_t
 papaya_audio_out_latency(const papaya_audio_out *ao)
 {
-    return ao->latency;
+    return atomic_load(&ao->latency);
 }

@@ -31,8 +31,11 @@ PAPAYA_EXPORT papaya_audio_out *papaya_audio_out_open(const papaya_audio_out_con
 PAPAYA_EXPORT void papaya_audio_out_close(papaya_audio_out **ao);
 PAPAYA_EXPORT const char *papaya_audio_out_device_name(const papaya_audio_out *ao);
 
-/* Queues a frame (F32 interleaved, the configured rate and channels) with the
- * serial of the packet queue it came from. Blocks while the buffer is full.
+/* Queues a frame (F32 interleaved) with the serial of the packet queue it
+ * came from. Blocks while the buffer is full. A frame in another rate or
+ * channel count than the device's (HE-AAC's SBR or PS, found only when
+ * decoding) restarts the device in its format, dropping what is queued; call
+ * it from one thread only.
  * Returns 0, or < 0 once the output is closing or aborted. */
 PAPAYA_EXPORT int papaya_audio_out_write(papaya_audio_out *ao, papaya_frame *frame, int serial);
 /* Drops everything queued (seeking); frames written after carry serial. */

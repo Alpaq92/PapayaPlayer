@@ -57,21 +57,35 @@ clock_follows_playback(void)
     PASS();
 }
 
+/* A frame in another format (HE-AAC decodes at twice the container's rate)
+ * restarts the device in it; playback and the clock go on. */
 TEST
-rejects_mismatched_frames(void)
+adopts_the_frames_format(void)
 {
+    papaya_clock clock;
     papaya_frame_pool *pool = papaya_frame_pool_new();
-    papaya_audio_out_config cfg = { .sample_rate = 48000, .channels = 2, .null_device = 1 };
-    papaya_audio_out *ao = papaya_audio_out_open(&cfg);
-    papaya_frame *mono = papaya_frame_get_audio(pool, PAPAYA_SAMPLE_F32, 1, 48000, 480);
-    papaya_frame *other_rate = papaya_frame_get_audio(pool, PAPAYA_SAMPLE_F32, 2, 44100, 441);
+    papaya_audio_out_config cfg = { .sample_rate = 24000, .channels = 2, .clock = &clock, .null_device = 1 };
+    papaya_audio_out *ao;
+    papaya_frame *bad = papaya_frame_get_audio(pool, PAPAYA_SAMPLE_S16, 2, 48000, 480);
 
+    papaya_clock_init(&clock);
+    ao = papaya_audio_out_open(&cfg);
     ASSERT(ao != NULL);
-    ASSERT(papaya_audio_out_write(ao, mono, 0) < 0);
-    ASSERT(papaya_audio_out_write(ao, other_rate, 0) < 0);
-    papaya_frame_unref(&mono);
-    papaya_frame_unref(&other_rate);
+    ASSERT(papaya_audio_out_write(ao, bad, 0) < 0); /* not F32: still refused */
+    papaya_frame_unref(&bad);
+    for (int i = 0; i < 6; i++) { /* 48 kHz stereo, then 48 kHz mono */
+        papaya_frame *f = papaya_frame_get_audio(pool, PAPAYA_SAMPLE_F32, i < 3 ? 2 : 1, 48000, 2400);
+
+        for (int k = 0; k < 2400 * f->channels; k++)
+            ((float *)f->audio[0])[k] = 0.0f;
+        f->pts = (int64_t)i * 50000;
+        ASSERT_EQ(0, papaya_audio_out_write(ao, f, 0));
+        papaya_frame_unref(&f);
+    }
+    papaya_sleep_us(250000);
+    ASSERT(papaya_clock_get(&clock, NULL) >= 150000); /* the mono frames play */
     papaya_audio_out_close(&ao);
+    papaya_clock_destroy(&clock);
     papaya_frame_pool_release(&pool);
     PASS();
 }
@@ -114,7 +128,7 @@ abort_releases_writer(void)
 SUITE(audio)
 {
     RUN_TEST(clock_follows_playback);
-    RUN_TEST(rejects_mismatched_frames);
+    RUN_TEST(adopts_the_frames_format);
     RUN_TEST(abort_releases_writer);
 }
 
