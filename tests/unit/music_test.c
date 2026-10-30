@@ -436,6 +436,124 @@ adts_round_trip(int aot)
     PASS();
 }
 
+/* The rarer ADTS layouts: two raw data blocks per frame, junk between
+ * frames and an ID3v1 tag at the end. They decode to the same PCM as plain
+ * one-block frames of the same access units. */
+typedef struct {
+    bytes all;
+    int sizes[512], count;
+} units;
+
+static void
+keep_unit(void *user, const unsigned char *data, int size)
+{
+    units *u = user;
+
+    if (u->count < 512) {
+        append_unit(&u->all, data, size);
+        u->sizes[u->count++] = size;
+    }
+}
+
+/* ADTS frames of `per` access units each (no CRC); junk after every fifth. */
+static void
+write_adts(bytes *file, const units *u, int per, int junk)
+{
+    static const unsigned char garbage[37] = { 0xFF, 0xF1, 0x00, 0x12, 0x34 }; /* a false sync too */
+    size_t at = 0;
+
+    for (int i = 0; i < u->count; i += per) {
+        int n = u->count - i < per ? u->count - i : per, payload = 0;
+        unsigned char h[7];
+
+        for (int k = 0; k < n; k++)
+            payload += u->sizes[i + k];
+        h[0] = 0xFF;
+        h[1] = 0xF1;                      /* MPEG-4, no CRC */
+        h[2] = 1 << 6 | 3 << 2;           /* LC, 48 kHz */
+        h[3] = (unsigned char)(2 << 6 | (payload + 7) >> 11);
+        h[4] = (unsigned char)((payload + 7) >> 3);
+        h[5] = (unsigned char)(((payload + 7) & 7) << 5 | 0x1F);
+        h[6] = (unsigned char)(0xFC | (n - 1));
+        append_unit(file, h, 7);
+        append_unit(file, u->all.data + at, payload);
+        at += (size_t)payload;
+        if (junk && i / per % 5 == 4)
+            append_unit(file, garbage, sizeof garbage);
+    }
+    if (junk) {
+        unsigned char tag[128] = { 'T', 'A', 'G' };
+
+        append_unit(file, tag, sizeof tag);
+    }
+}
+
+/* Decodes all of an ADTS file; the PCM goes to out (samples * 2 floats). */
+static long
+decode_adts(const bytes *file, float *out, long cap, int64_t *duration)
+{
+    papaya_demuxer *dm = papaya_demux_open(papaya_io_open_memory(file->data, file->size));
+    papaya_frame_pool *pool = papaya_frame_pool_new();
+    papaya_decoder *d = dm ? papaya_decoder_open(papaya_demux_stream(dm, 0), pool) : NULL;
+    papaya_packet *p;
+    papaya_frame *f;
+    long samples = 0;
+
+    if (!d) {
+        papaya_demux_close(&dm);
+        papaya_frame_pool_release(&pool);
+        return -1;
+    }
+    *duration = papaya_demux_duration(dm);
+    while (papaya_demux_read(dm, &p) == 0) {
+        papaya_decoder_send(d, p);
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(d, &f) == PAPAYA_DECODE_OK) {
+            for (int i = 0; i < f->samples * 2 && samples * 2 + i < cap * 2; i++)
+                out[samples * 2 + i] = ((const float *)f->audio[0])[i];
+            samples += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    papaya_decoder_close(&d);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&dm);
+    return samples;
+}
+
+TEST
+adts_variants(void)
+{
+    enum { N = 96000 };
+    static short pcm[N * 2];
+    static float plain[N * 2 + 4096], packed[N * 2 + 4096];
+    unsigned char config[64];
+    int config_size = 0;
+    units u = { { NULL, 0 }, { 0 }, 0 };
+    bytes one = { NULL, 0 }, two = { NULL, 0 };
+    int64_t d1 = 0, d2 = 0;
+    long n1, n2;
+
+    for (size_t i = 0; i < N; i++)
+        pcm[2 * i] = pcm[2 * i + 1] = (short)(12000 * sin(2 * 3.14159265358979 * 440 * (double)i / 48000));
+    ASSERT(aac_encode(2, 0, 48000, 2, 128000, pcm, N, keep_unit, &u, config, &config_size) > 20);
+    ASSERT(u.count < 512);
+    write_adts(&one, &u, 1, 0);
+    write_adts(&two, &u, 2, 1);
+    n1 = decode_adts(&one, plain, N + 2048, &d1);
+    n2 = decode_adts(&two, packed, N + 2048, &d2);
+    /* libxaac's first frame is short; every other access unit is 1024 samples */
+    ASSERT(n1 > (long)(u.count - 1) * 1024 && n1 <= (long)u.count * 1024);
+    ASSERT_EQ(n1, n2);
+    ASSERT_EQ(d1, d2);
+    ASSERT_EQ((int64_t)u.count * 1024 * 1000000 / 48000, d2);
+    ASSERT_EQ(0, memcmp(plain, packed, sizeof(float) * 2 * (size_t)(n1 < N + 2048 ? n1 : N + 2048)));
+    free(u.all.data);
+    free(one.data);
+    free(two.data);
+    PASS();
+}
+
 /* ---- FLAC: libFLAC writes the file, every sample comes back ------------ */
 
 static FLAC__StreamEncoderWriteStatus
@@ -753,6 +871,7 @@ SUITE(music)
     RUN_TEST(mp3_duration_and_seek);
     RUN_TEST1(adts_round_trip, 2); /* AAC-LC */
     RUN_TEST1(adts_round_trip, 5); /* HE-AAC */
+    RUN_TEST(adts_variants);
     RUN_TEST1(flac_round_trip, 16);
     RUN_TEST1(flac_round_trip, 24);
     RUN_TEST1(ogg_round_trip, PAPAYA_CODEC_VORBIS);

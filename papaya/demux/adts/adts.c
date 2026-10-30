@@ -3,7 +3,14 @@
  * becomes the AudioSpecificConfig the AAC decoder starts from, and packets
  * are the frames without their headers. Every frame's offset is indexed at
  * open (a header read per frame), so the length and seeking are exact. A
- * leading ID3v2 tag is skipped. */
+ * leading ID3v2 tag is skipped, and so is junk between frames: the index
+ * resyncs on the next pair of matching headers.
+ *
+ * A frame may hold up to four raw data blocks (1024 samples each); without a
+ * CRC they go to the decoder as one packet, which it decodes block by block.
+ * With a CRC each block carries its own and the packet would need splitting:
+ * not done, as no encoder in use writes that. Channel configuration 0 (the
+ * layout in a PCE inside the stream) is not supported either. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,11 +19,13 @@
 typedef struct {
     int profile, rate_index, channels, rate;
     int header, size;   /* header bytes, whole frame bytes */
+    int blocks;         /* raw data blocks in the frame */
 } adts_header;
 
 typedef struct {
     papaya_io *io;
     int64_t *offsets;   /* each frame's header */
+    int64_t *starts;    /* each frame's first sample; [count] is the total */
     int64_t count, next;
     int rate;
     uint8_t config[2];  /* the AudioSpecificConfig */
@@ -30,7 +39,9 @@ parse(const uint8_t *h, adts_header *o)
 {
     if (h[0] != 0xFF || (h[1] & 0xF6) != 0xF0) /* sync, layer 0 */
         return -1;
-    o->header = (h[1] & 1) ? 7 : 9;
+    o->blocks = (h[6] & 3) + 1;
+    /* with a CRC: the block positions, then the CRC */
+    o->header = (h[1] & 1) ? 7 : 7 + 2 * (o->blocks - 1) + 2;
     o->profile = h[2] >> 6;
     o->rate_index = (h[2] >> 2) & 15;
     o->channels = (h[2] & 1) << 2 | h[3] >> 6;
@@ -51,6 +62,47 @@ skip_id3(papaya_io *io)
         pos += 10 + ((int64_t)(b[6] & 127) << 21 | (b[7] & 127) << 14 | (b[8] & 127) << 7 | (b[9] & 127))
                + ((b[5] & 0x10) ? 10 : 0);
     return pos;
+}
+
+/* Whether a whole frame at pos matches first; strict: and so does the
+ * header after it (or the file ends there), when resyncing on junk. */
+static int
+frame_at(papaya_io *io, int64_t pos, const adts_header *first, adts_header *h, int strict)
+{
+    uint8_t b[7], last;
+    adts_header next;
+
+    if (papaya_io_read_at(io, pos, b, 7) != 0 || parse(b, h) != 0 || h->rate_index != first->rate_index
+        || h->profile != first->profile || papaya_io_read_at(io, pos + h->size - 1, &last, 1) != 0)
+        return 0;
+    if (!strict || papaya_io_read_at(io, pos + h->size, b, 7) != 0)
+        return 1;
+    return parse(b, &next) == 0 && next.rate_index == first->rate_index;
+}
+
+#define RESYNC_MAX (64 * 1024)
+
+/* The next frame start after junk at pos, within RESYNC_MAX bytes, or -1. */
+static int64_t
+resync(papaya_io *io, int64_t pos, const adts_header *first)
+{
+    uint8_t w[4096];
+    adts_header h;
+
+    for (int64_t at = pos + 1; at < pos + RESYNC_MAX; at += (int64_t)sizeof w - 1) {
+        size_t n = sizeof w;
+
+        while (n > 1 && papaya_io_read_at(io, at, w, n) != 0)
+            n /= 2; /* near the end of the file */
+        if (n <= 1)
+            return -1;
+        for (size_t i = 0; i + 1 < n; i++)
+            if (w[i] == 0xFF && (w[i + 1] & 0xF6) == 0xF0 && frame_at(io, at + (int64_t)i, first, &h, 1))
+                return at + (int64_t)i;
+        if (n < sizeof w)
+            return -1;
+    }
+    return -1;
 }
 
 static int
@@ -76,29 +128,43 @@ adts_open(papaya_demuxer *d, papaya_io *io)
     uint8_t b[7];
     adts *c;
 
-    if (papaya_io_read_at(io, pos, b, 7) != 0 || parse(b, &first) != 0)
+    if (papaya_io_read_at(io, pos, b, 7) != 0 || parse(b, &first) != 0 || first.channels == 0)
         return NULL;
     c = calloc(1, sizeof *c);
     if (!c)
         return NULL;
     c->io = io;
     c->rate = first.rate;
-    /* The index: frames while their headers agree; a cut-off last one ends it. */
-    while (papaya_io_read_at(io, pos, b, 7) == 0 && parse(b, &h) == 0 && h.rate_index == first.rate_index) {
-        uint8_t last;
+    /* The index: frames while their headers agree, over junk between them;
+     * a cut-off last one ends it. */
+    for (;;) {
+        int64_t total = c->count ? c->starts[c->count] : 0;
 
-        if (papaya_io_read_at(io, pos + h.size - 1, &last, 1) != 0)
-            break;
-        if (c->count == cap) {
-            int64_t *grown;
+        if (!frame_at(io, pos, &first, &h, 0)) {
+            int64_t again;
+            uint8_t probe;
+
+            if (papaya_io_read_at(io, pos, &probe, 1) != 0 || (again = resync(io, pos, &first)) < 0)
+                break;
+            pos = again;
+            continue;
+        }
+        if (c->count + 1 >= cap) {
+            int64_t *grown_o, *grown_s;
 
             cap = cap ? cap * 2 : 4096;
-            grown = realloc(c->offsets, sizeof *grown * (size_t)cap);
-            if (!grown)
+            grown_o = realloc(c->offsets, sizeof *grown_o * (size_t)cap);
+            if (grown_o)
+                c->offsets = grown_o;
+            grown_s = realloc(c->starts, sizeof *grown_s * (size_t)cap);
+            if (grown_s)
+                c->starts = grown_s;
+            if (!grown_o || !grown_s)
                 goto fail;
-            c->offsets = grown;
         }
-        c->offsets[c->count++] = pos;
+        c->offsets[c->count] = pos;
+        c->starts[c->count] = total;
+        c->starts[++c->count] = total + 1024 * h.blocks;
         pos += h.size;
     }
     if (c->count == 0)
@@ -117,11 +183,12 @@ adts_open(papaya_demuxer *d, papaya_io *io)
     s->channels = first.channels;
     s->extradata = c->config;
     s->extradata_size = sizeof c->config;
-    s->duration = c->count * 1024 * 1000000 / c->rate;
+    s->duration = c->starts[c->count] * 1000000 / c->rate;
     papaya_demux_set_duration(d, s->duration);
     return c;
 fail:
     free(c->offsets);
+    free(c->starts);
     free(c);
     return NULL;
 }
@@ -147,8 +214,8 @@ adts_read(void *ctx, papaya_packet **packet)
         return PAPAYA_DEMUX_ERROR;
     }
     p->stream = 0;
-    p->pts = p->dts = c->next * 1024 * 1000000 / c->rate;
-    p->duration = (int64_t)1024 * 1000000 / c->rate;
+    p->pts = p->dts = c->starts[c->next] * 1000000 / c->rate;
+    p->duration = (c->starts[c->next + 1] - c->starts[c->next]) * 1000000 / c->rate;
     p->flags |= PAPAYA_PACKET_KEY;
     c->next++;
     *packet = p;
@@ -159,9 +226,18 @@ static int
 adts_seek(void *ctx, int64_t pts)
 {
     adts *c = ctx;
-    int64_t frame = pts > 0 ? pts * c->rate / 1000000 / 1024 : 0;
+    int64_t sample = pts > 0 ? pts * c->rate / 1000000 : 0, lo = 0, hi = c->count;
 
-    c->next = frame < c->count ? frame : c->count;
+    /* the last frame starting at or before the sample */
+    while (lo + 1 < hi) {
+        int64_t mid = (lo + hi) / 2;
+
+        if (c->starts[mid] <= sample)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    c->next = sample >= c->starts[c->count] ? c->count : lo;
     return 0;
 }
 
@@ -171,6 +247,7 @@ adts_close(void *ctx)
     adts *c = ctx;
 
     free(c->offsets);
+    free(c->starts);
     free(c);
 }
 

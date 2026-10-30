@@ -200,15 +200,54 @@ round_samples(int64_t us, int rate)
     return (us * rate + (us < 0 ? -500000 : 500000)) / 1000000;
 }
 
+/* The decoder's output, trimmed for gapless, as one frame. */
+static int
+emit_pcm(aac_ctx *c, WORD32 out_bytes, void (*emit)(void *, papaya_frame *), void *sink)
+{
+    int rate = (int)get(&c->d, IA_XHEAAC_DEC_CONFIG_PARAM_SAMP_FREQ);
+    int channels = (int)get(&c->d, IA_XHEAAC_DEC_CONFIG_PARAM_NUM_CHANNELS);
+    int n, skip, keep;
+    int64_t start, end;
+    papaya_frame *f;
+    const int16_t *in;
+    float *out;
+
+    if (rate <= 0 || channels < 1 || channels > 8)
+        return -1;
+    n = out_bytes / (int)sizeof(int16_t) / channels;
+    if (n <= 0)
+        return 0;
+    /* Whole samples, so the trims are exact. */
+    start = c->next_pts == PAPAYA_NOPTS ? 0 : round_samples(c->next_pts, rate);
+    end = c->gapless_end > 0 ? round_samples(c->gapless_end, rate) : INT64_MAX;
+    skip = start < 0 ? (int)(-start < n ? -start : n) : 0;
+    keep = n - skip;
+    if (c->next_pts != PAPAYA_NOPTS)
+        c->next_pts += (int64_t)n * 1000000 / rate;
+    if (start + n > end)
+        keep = end - start > skip ? (int)(end - start - skip) : 0;
+    if (keep <= 0)
+        return 0;
+    f = papaya_frame_get_audio(c->pool, PAPAYA_SAMPLE_F32, channels, rate, keep);
+    if (!f)
+        return -1;
+    in = c->d.out + (size_t)skip * (size_t)channels;
+    out = (float *)f->audio[0];
+    for (int i = 0; i < keep * channels; i++)
+        out[i] = (float)in[i] * (1.0f / 32768.0f);
+    f->pts = c->next_pts == PAPAYA_NOPTS ? PAPAYA_NOPTS : (start + skip) * 1000000 / rate;
+    f->duration = (int64_t)keep * 1000000 / rate;
+    emit(sink, f);
+    return 0;
+}
+
+/* A packet may hold several raw data blocks (an ADTS frame with more than
+ * one): each call decodes one, until the packet is used up. */
 static int
 aac_decode_packet(void *ctx, const papaya_packet *p, void (*emit)(void *, papaya_frame *), void *sink)
 {
     aac_ctx *c = ctx;
-    WORD32 size, out_bytes = 0;
-    int rate, channels, n;
-    papaya_frame *f;
-    const int16_t *in;
-    float *out;
+    WORD32 size;
 
     if (!p)
         return 0; /* nothing held back */
@@ -229,42 +268,25 @@ aac_decode_packet(void *ctx, const papaya_packet *p, void (*emit)(void *, papaya
         if (size <= 0)
             return 0;
     }
-    if (fatal(api(&c->d, IA_API_CMD_SET_INPUT_BYTES, 0, &size)) ||
-        fatal(api(&c->d, IA_API_CMD_EXECUTE, IA_CMD_TYPE_DO_EXECUTE, NULL)) ||
-        fatal(api(&c->d, IA_API_CMD_GET_OUTPUT_BYTES, 0, &out_bytes)))
-        return -1;
     if (p->pts != PAPAYA_NOPTS)
         c->next_pts = p->pts;
-    rate = (int)get(&c->d, IA_XHEAAC_DEC_CONFIG_PARAM_SAMP_FREQ);
-    channels = (int)get(&c->d, IA_XHEAAC_DEC_CONFIG_PARAM_NUM_CHANNELS);
-    if (rate <= 0 || channels < 1 || channels > 8)
-        return -1;
-    n = out_bytes / (int)sizeof(int16_t) / channels;
-    if (n <= 0)
-        return 0;
-    {
-        /* Whole samples, so the trims are exact. */
-        int64_t start = c->next_pts == PAPAYA_NOPTS ? 0 : round_samples(c->next_pts, rate);
-        int64_t end = c->gapless_end > 0 ? round_samples(c->gapless_end, rate) : INT64_MAX;
-        int skip = start < 0 ? (int)(-start < n ? -start : n) : 0, keep = n - skip;
+    for (int blocks = 0; size > 0 && blocks < 8; blocks++) {
+        WORD32 out_bytes = 0, used = 0;
 
-        if (c->next_pts != PAPAYA_NOPTS)
-            c->next_pts += (int64_t)n * 1000000 / rate;
-        if (start + n > end)
-            keep = end - start > skip ? (int)(end - start - skip) : 0;
-        if (keep <= 0)
-            return 0;
-        f = papaya_frame_get_audio(c->pool, PAPAYA_SAMPLE_F32, channels, rate, keep);
-        if (!f)
+        if (fatal(api(&c->d, IA_API_CMD_SET_INPUT_BYTES, 0, &size)) ||
+            fatal(api(&c->d, IA_API_CMD_EXECUTE, IA_CMD_TYPE_DO_EXECUTE, NULL)) ||
+            fatal(api(&c->d, IA_API_CMD_GET_OUTPUT_BYTES, 0, &out_bytes)) ||
+            fatal(api(&c->d, IA_API_CMD_GET_CURIDX_INPUT_BUF, 0, &used)))
             return -1;
-        in = c->d.out + (size_t)skip * (size_t)channels;
-        out = (float *)f->audio[0];
-        for (int i = 0; i < keep * channels; i++)
-            out[i] = (float)in[i] * (1.0f / 32768.0f);
-        f->pts = c->next_pts == PAPAYA_NOPTS ? PAPAYA_NOPTS : (start + skip) * 1000000 / rate;
-        f->duration = (int64_t)keep * 1000000 / rate;
+        if (emit_pcm(c, out_bytes, emit, sink) != 0)
+            return -1;
+        /* What is left must be another block, not the byte alignment's
+         * padding: at least a few bytes. */
+        if (used <= 0 || used >= size - 2)
+            break;
+        memmove(c->d.in, c->d.in + used, (size_t)(size - used));
+        size -= used;
     }
-    emit(sink, f);
     return 0;
 }
 
