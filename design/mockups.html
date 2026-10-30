@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PapayaPlayer Screen Mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* One visual world: a media player is a dark room, so the page stays dark.
+   Layout: a column of numbered screens, each a mock window beside its notes. */
+:root {
+  --stage: #0b0a0c;        /* behind the video */
+  --chrome: #17151a;       /* bars, menus */
+  --raise: #232027;        /* hover, pills */
+  --line: #3a353f;
+  --ink: #f2eee9;
+  --mute: #a39ba6;
+  --papaya: #ff7a45;       /* the accent */
+  --guava: #ff3d6e;        /* the accent template's gradient start */
+  --display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #121014; color: var(--ink); font-family: var(--body); line-height: 1.5; }
+main { max-width: 1180px; margin: 0 auto; padding: 40px 20px 80px; display: grid; gap: 56px; }
+header.page { display: grid; gap: 10px; max-width: 70ch; }
+h1 { font-family: var(--display); font-size: 34px; line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 22px; margin: 0; text-wrap: balance; }
+h3 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); margin: 0; font-weight: 600; }
+p { margin: 0; }
+.lede { color: var(--mute); }
+.screen { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
+.screen > .head { grid-column: 1 / -1; display: flex; gap: 14px; align-items: baseline; }
+.num { font-family: var(--mono); color: var(--papaya); font-size: 14px; }
+.notes { display: grid; gap: 16px; font-size: 14.5px; }
+.notes ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; margin-right: 4px; }
+.ok { background: #1d3326; color: #8fe0ab; }
+.work { background: #3a2a14; color: #ffc27a; }
+.ask { border: 1px solid var(--papaya); color: var(--papaya); padding: 12px 14px; border-radius: 10px; }
+
+/* the mock windows */
+.win { background: var(--stage); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; position: relative;
+       aspect-ratio: 16 / 9; font-variant-numeric: tabular-nums; }
+.frame { position: absolute; inset: 0; background:
+  radial-gradient(120% 90% at 70% 30%, #3b2a33 0%, #1b1418 45%, #0b0a0c 80%); }
+.frame::after { content: ""; position: absolute; left: 12%; right: 30%; bottom: 22%; height: 36%;
+  background: linear-gradient(180deg, transparent, #2a1e24 40%, #1a1216); border-radius: 50% 50% 0 0 / 30% 30% 0 0; opacity: .9; }
+.big-play { position: absolute; left: 50%; top: 45%; translate: -50% -50%; width: 84px; height: 84px; border-radius: 50%;
+  background: rgba(255,255,255,.12); backdrop-filter: blur(4px); display: grid; place-items: center; }
+.icon { width: 22px; height: 22px; fill: var(--ink); flex: none; }
+.icon.sm { width: 18px; height: 18px; }
+.big-play .icon { width: 34px; height: 34px; margin-left: 4px; }
+
+.top { position: absolute; left: 0; right: 0; top: 0; display: flex; gap: 8px; padding: 12px 14px; align-items: center;
+  background: linear-gradient(180deg, rgba(0,0,0,.55), transparent); }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 99px;
+  background: var(--raise); font-size: 13px; color: var(--ink); white-space: nowrap; max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+.pill.grad { background: linear-gradient(90deg, var(--guava), var(--papaya)); color: #1b0e08; font-weight: 600; }
+.spacer { flex: 1; }
+
+.bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 14px 12px; display: grid; gap: 8px;
+  background: linear-gradient(0deg, rgba(0,0,0,.75), transparent); }
+.seek { position: relative; height: 4px; border-radius: 4px; background: rgba(255,255,255,.22); }
+.seek .fill { position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: inherit; background: var(--ink); }
+.seek .thumb { position: absolute; left: 38%; top: 50%; translate: -50% -50%; width: 12px; height: 12px; border-radius: 50%; background: var(--ink); }
+.row { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.btn { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; }
+.btn.play { width: 48px; border-radius: 99px; background: var(--ink); }
+.btn.play .icon { fill: #111; }
+.txt { font-size: 13px; color: var(--ink); white-space: nowrap; }
+.txt.dim { color: var(--mute); }
+.vol { width: 70px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.22); position: relative; }
+.vol::before { content: ""; position: absolute; inset: 0 30% 0 0; border-radius: inherit; background: var(--ink); }
+
+/* accent variant */
+.accent .bottom { left: 14px; right: 14px; bottom: 12px; background: rgba(15,13,17,.82); border: 1px solid rgba(255,255,255,.18);
+  border-radius: 14px; padding: 10px 12px; }
+.accent .seek .fill { background: linear-gradient(90deg, var(--guava), var(--papaya)); }
+.accent .seek .thumb { background: var(--papaya); box-shadow: 0 0 0 4px rgba(255,122,69,.25); }
+.accent .btn.play { background: linear-gradient(90deg, var(--guava), var(--papaya)); }
+.vslider { position: absolute; right: 108px; bottom: 74px; width: 34px; height: 120px; border-radius: 12px; background: rgba(15,13,17,.9);
+  border: 1px solid rgba(255,255,255,.18); display: grid; place-items: center; }
+.vslider span { width: 4px; height: 92px; border-radius: 4px; background: rgba(255,255,255,.22); position: relative; }
+.vslider span::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 64%; border-radius: inherit;
+  background: linear-gradient(0deg, var(--guava), var(--papaya)); }
+.menu { position: absolute; right: 52px; bottom: 74px; width: 210px; border-radius: 12px; overflow: hidden;
+  background: rgba(23,21,26,.96); border: 1px solid var(--line); font-size: 13px; }
+.menu div { display: flex; justify-content: space-between; padding: 9px 12px; }
+.menu div + div { border-top: 1px solid #2a262e; }
+.menu .on { background: linear-gradient(90deg, rgba(255,61,110,.25), rgba(255,122,69,.18)); }
+.menu b { font-weight: 500; color: var(--mute); }
+
+/* audio */
+.audio { background: linear-gradient(160deg, #1d161b, #0e0c10 60%); display: grid; grid-template-rows: auto 1fr; aspect-ratio: auto; }
+.player { display: grid; grid-template-columns: 150px 1fr; gap: 22px; padding: 22px; align-items: center; }
+.art { width: 150px; height: 150px; border-radius: 14px;
+  background: conic-gradient(from 200deg at 60% 40%, #ff7a45, #ff3d6e, #6b2a5e, #2a1e3f, #ffb36b, #ff7a45); }
+.meta { display: grid; gap: 10px; min-width: 0; }
+.title { font-family: var(--display); font-size: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.round { width: 56px; height: 56px; border-radius: 50%; background: var(--papaya); display: grid; place-items: center; }
+.round .icon { fill: #1b0e08; width: 26px; height: 26px; margin-left: 3px; }
+.bars { height: 64px; display: flex; gap: 3px; align-items: flex-end; }
+.bars i { flex: 1; border-radius: 2px 2px 0 0; background: linear-gradient(0deg, var(--guava), var(--papaya)); }
+.list { border-top: 1px solid var(--line); font-size: 14px; }
+.list div { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; padding: 9px 22px; color: var(--mute); }
+.list div + div { border-top: 1px solid #221f25; }
+.list .now { color: var(--ink); background: rgba(255,122,69,.10); box-shadow: inset 3px 0 0 var(--papaya); }
+.list .n { font-family: var(--mono); font-size: 12px; padding-top: 2px; }
+.speed { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 99px; padding: 3px 9px; }
+
+/* visualiser styles */
+.vis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.vis figure { margin: 0; display: grid; gap: 8px; }
+.vis canvas { width: 100%; height: 130px; display: block; background: #0d0b0f; border: 1px solid var(--line); border-radius: 10px; }
+.vis figcaption { font-size: 13.5px; color: var(--mute); }
+.vis figcaption b { color: var(--ink); font-weight: 600; }
+
+/* settings */
+.settings { aspect-ratio: auto; display: grid; grid-template-columns: 190px 1fr; min-height: 340px; background: var(--chrome); }
+.side { border-right: 1px solid var(--line); padding: 14px 10px; display: grid; gap: 4px; align-content: start; font-size: 14px; }
+.side div { padding: 7px 10px; border-radius: 8px; color: var(--mute); }
+.side .on { background: var(--raise); color: var(--ink); }
+.pane { padding: 18px 22px; display: grid; gap: 16px; align-content: start; font-size: 14px; }
+.field { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+.field small { display: block; color: var(--mute); font-size: 12.5px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg span { padding: 5px 12px; font-size: 13px; color: var(--mute); }
+.seg .on { background: var(--papaya); color: #1b0e08; font-weight: 600; }
+.toggle { width: 38px; height: 22px; border-radius: 99px; background: var(--papaya); position: relative; }
+.toggle::after { content: ""; position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #1b0e08; }
+.toggle.off { background: var(--raise); }
+.toggle.off::after { right: auto; left: 3px; background: var(--mute); }
+
+.decide { display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 28px; }
+.decide ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; max-width: 75ch; }
+
+@media (max-width: 860px) {
+  .screen { grid-template-columns: 1fr; }
+  .vis { grid-template-columns: 1fr; }
+  .player { grid-template-columns: 1fr; }
+  .settings { grid-template-columns: 1fr; }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); grid-auto-flow: column; overflow-x: auto; }
+  .hide-narrow { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.87l12-7.5a1 1 0 0 0 0-1.74l-12-7.5A1 1 0 0 0 7 4.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3.5 7L19 5v14z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5l9.5 7L5 19z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></symbol>
+  <symbol id="i-pip" viewBox="0 0 24 24"><path d="M3 5h18v14H3zm2 2v10h14V7zm6 4h6v4h-6z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></symbol>
+  <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zm10 0h6v6h-2V6h-4zM4 14h2v4h4v2H4zm14 4v-4h2v6h-6v-2z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm14-2v-4l4 3z"/></symbol>
+</svg>
+
+<main>
+  <header class="page">
+    <h1>PapayaPlayer screen mockups</h1>
+    <p class="lede">Phase 3 starts by agreeing the look before building it. Each screen below follows the "UI direction" in TECH-STACK.md, with notes on what Reaktor can draw today and the choices left open. The numbered questions at the end are the ones to settle.</p>
+  </header>
+
+  <!-- 1 -->
+  <section class="screen" aria-labelledby="s1">
+    <div class="head"><span class="num">01</span><h2 id="s1">Video, minimal</h2></div>
+    <div class="win">
+      <div class="frame"></div>
+      <div class="big-play"><svg class="icon"><use href="#i-play"/></svg></div>
+      <div class="top"><span class="pill">Holiday 2025</span><span class="pill">03 Harbour at dusk.mkv</span></div>
+      <div class="bottom">
+        <div class="seek"><div class="fill"></div><div class="thumb"></div></div>
+        <div class="row">
+          <div class="btn play"><svg class="icon sm"><use href="#i-play"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-prev"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-back"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-fwd"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-next"/></svg></div>
+          <span class="txt">1:42 <span class="dim">/ 4:28</span></span>
+          <span class="spacer"></span>
+          <svg class="icon sm"><use href="#i-vol"/></svg><span class="vol hide-narrow"></span>
+          <div class="btn hide-narrow"><svg class="icon sm"><use href="#i-pip"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-gear"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-full"/></svg></div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <h3>What it is</h3>
+      <ul>
+        <li>Black stage, big centred play while paused.</li>
+        <li>Full-width seek bar with a thumb; under it the pill play button, previous, −10 s, +10 s, next, time.</li>
+        <li>Right side: volume, picture-in-picture, settings, full screen. The settings cog sits at the far right, as it does in the app today.</li>
+        <li>Folder and file pills top left; both bars fade out while playing.</li>
+      </ul>
+      <h3>Reaktor today</h3>
+      <p><span class="tag ok">ready</span> pills, rounded buttons, sliders, flat icons.</p>
+      <p><span class="tag work">needs work</span> the fading shade behind the bars is a gradient; Reaktor CSS has none, so we draw it with a multi-colour rectangle.</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="screen accent" aria-labelledby="s2">
+    <div class="head"><span class="num">02</span><h2 id="s2">Video, accent</h2></div>
+    <div class="win">
+      <div class="frame"></div>
+      <div class="top"><span class="pill grad">Holiday 2025</span><span class="pill grad">03 Harbour at dusk.mkv</span></div>
+      <div class="vslider"><span></span></div>
+      <div class="menu">
+        <div><span>Speed</span><b>1.25×</b></div>
+        <div class="on"><span>Audio</span><b>English · AAC 5.1</b></div>
+        <div><span>Subtitles</span><b>Off</b></div>
+        <div><span>Aspect</span><b>Auto</b></div>
+      </div>
+      <div class="bottom">
+        <div class="seek"><div class="fill"></div><div class="thumb"></div></div>
+        <div class="row">
+          <div class="btn play"><svg class="icon sm"><use href="#i-pause"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-prev"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-back"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-fwd"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-next"/></svg></div>
+          <span class="txt">1:42 <span class="dim">/ 4:28</span></span>
+          <span class="spacer"></span>
+          <div class="btn"><svg class="icon sm"><use href="#i-vol"/></svg></div>
+          <div class="btn hide-narrow"><svg class="icon sm"><use href="#i-pip"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-gear"/></svg></div>
+          <div class="btn"><svg class="icon sm"><use href="#i-full"/></svg></div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <h3>What it is</h3>
+      <ul>
+        <li>The controls float in a rounded, outlined bar instead of spanning the edge.</li>
+        <li>Seek fill, play button, folder pills and the chosen menu row carry the guava-to-papaya gradient.</li>
+        <li>Volume opens as a vertical slider above its icon; settings open as a menu above the cog (shown with both open).</li>
+      </ul>
+      <h3>Reaktor today</h3>
+      <p><span class="tag ok">ready</span> outlined rounded bar, per-corner radius, borders, opacity.</p>
+      <p><span class="tag work">needs work</span> every gradient here, and the soft glow on the thumb (no box-shadow). Either we draw them in our own widgets, or Reaktor's CSS gains gradients.</p>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="screen" aria-labelledby="s3">
+    <div class="head"><span class="num">03</span><h2 id="s3">Audio</h2></div>
+    <div class="win audio">
+      <div class="player">
+        <div class="art" role="img" aria-label="Album art"></div>
+        <div class="meta">
+          <div class="txt dim">Mira Holt · Low Tide Hours</div>
+          <div class="title">Salt on the Window</div>
+          <div class="bars" id="mini-bars" aria-hidden="true"></div>
+          <div class="seek"><div class="fill" style="background:var(--papaya)"></div><div class="thumb" style="background:var(--papaya)"></div></div>
+          <div class="row">
+            <span class="txt">1:31 <span class="dim">/ 3:58</span></span>
+            <span class="spacer"></span>
+            <div class="btn"><svg class="icon sm"><use href="#i-back"/></svg></div>
+            <div class="btn"><svg class="icon"><use href="#i-prev"/></svg></div>
+            <div class="round"><svg class="icon"><use href="#i-play"/></svg></div>
+            <div class="btn"><svg class="icon"><use href="#i-next"/></svg></div>
+            <div class="btn"><svg class="icon sm"><use href="#i-fwd"/></svg></div>
+            <span class="spacer"></span>
+            <svg class="icon sm"><use href="#i-vol"/></svg><span class="vol hide-narrow"></span>
+            <span class="speed">1.0×</span>
+            <div class="btn"><svg class="icon sm"><use href="#i-list"/></svg></div>
+          </div>
+        </div>
+      </div>
+      <div class="list">
+        <div><span class="n">01</span><span>Harbour Lights</span><span>3:12</span></div>
+        <div class="now"><span class="n">02</span><span>Salt on the Window</span><span>3:58</span></div>
+        <div><span class="n">03</span><span>Ferry Timetable</span><span>4:41</span></div>
+        <div><span class="n">04</span><span>Low Tide Hours</span><span>5:06</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <h3>What it is</h3>
+      <ul>
+        <li>Album art left; artist, title, a small visualiser strip, thin progress bar.</li>
+        <li>Large round play with previous / next either side, ±15 s outside those.</li>
+        <li>Volume, speed and the playlist toggle on the right; the folder's tracks below, current one marked with an accent edge.</li>
+        <li>Shown whenever the file has no video.</li>
+      </ul>
+      <h3>Reaktor today</h3>
+      <p><span class="tag ok">ready</span> round buttons, list rows, images for the art.</p>
+      <p><span class="tag work">needs work</span> the visualiser bars (cavacore + our drawing, phase 3 items) and gradient bars.</p>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="screen" aria-labelledby="s4">
+    <div class="head"><span class="num">04</span><h2 id="s4">Visualiser styles</h2></div>
+    <div class="vis">
+      <figure><canvas id="v-bars" width="360" height="130" aria-label="Bars style"></canvas><figcaption><b>Bars</b> · grow from bottom · gradient</figcaption></figure>
+      <figure><canvas id="v-wave" width="360" height="130" aria-label="Wave style"></canvas><figcaption><b>Wave</b> · curve, filled · album-art colours</figcaption></figure>
+      <figure><canvas id="v-blocks" width="360" height="130" aria-label="Blocks style"></canvas><figcaption><b>Blocks</b> · segmented, inactive shown · hue shift</figcaption></figure>
+    </div>
+    <div class="notes">
+      <h3>What it is</h3>
+      <ul>
+        <li>cava-style analysis (cavacore over KISS FFT), drawn by our own code.</li>
+        <li>A theme is a named preset: style + placement + colour source, kept in settings.</li>
+        <li>Colour sources: fixed, accent, custom list, gradient, hue shift, album-art colours.</li>
+      </ul>
+      <h3>Reaktor today</h3>
+      <p><span class="tag work">unverified</span> whether Reaktor's primitives draw 64+ bars at 60 fps; the fallback is our own shader, which waits on SDL's GPU renderer.</p>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="screen" aria-labelledby="s5">
+    <div class="head"><span class="num">05</span><h2 id="s5">Settings</h2></div>
+    <div class="win settings">
+      <div class="side">
+        <div class="on">Playback</div><div>Video</div><div>Audio</div><div>Subtitles</div><div>Visualiser</div><div>Window</div><div>Keys</div>
+      </div>
+      <div class="pane">
+        <div class="field"><span>Play the next file at the end<small>Moves on through the folder.</small></span><span class="toggle"></span></div>
+        <div class="field"><span>Resume where I left off<small>Per file, kept for 90 days.</small></span><span class="toggle off"></span></div>
+        <div class="field"><span>Skip step<small>The ± buttons and J / L.</small></span><span class="seg"><span>5 s</span><span class="on">10 s</span><span>15 s</span><span>30 s</span></span></div>
+        <div class="field"><span>Default speed</span><span class="seg"><span>0.75×</span><span class="on">1×</span><span>1.25×</span><span>1.5×</span></span></div>
+        <div class="field"><span>Controls style<small>Screens 01 and 02.</small></span><span class="seg"><span class="on">Minimal</span><span>Accent</span></span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <h3>What it is</h3>
+      <ul>
+        <li>The cog's quick popup stays for the few things changed mid-film (speed, tracks, subtitles).</li>
+        <li>This full window holds everything else, grouped by topic.</li>
+        <li>Today's two settings (title bar, next file) move here.</li>
+      </ul>
+      <h3>Reaktor today</h3>
+      <p><span class="tag ok">ready</span> tabs, toggles, segmented selects; a second window works.</p>
+    </div>
+  </section>
+
+  <section class="decide" aria-labelledby="sq">
+    <h2 id="sq">To decide</h2>
+    <ol>
+      <li><b>Controls style:</b> minimal (01), accent (02), or both with a setting as in 05? Both costs little extra once the widgets exist.</li>
+      <li><b>Gradients:</b> draw them in our own widgets now, or ask for gradients in Reaktor's CSS (with the GPU-renderer and HDR requests already in REAKTOR-HDR.md)?</li>
+      <li><b>Accent colour:</b> papaya orange with a guava-pink gradient, as shown, or another?</li>
+      <li><b>Audio screen:</b> playlist always below (03), or a slide-out panel behind the list button?</li>
+      <li><b>Visualiser:</b> which style and colour source is the default, and does it also run behind video-less files in full screen?</li>
+      <li><b>Settings:</b> a separate window (05), or a full-height panel inside the main window?</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+(function () {
+  var N = 48, t0 = 1.7;
+  function level(i, t) {
+    var x = i / N;
+    var v = 0.55 * Math.exp(-3.2 * x) + 0.25 * Math.sin(i * 0.9 + t * 2.1) * Math.sin(i * 0.23 + t) + 0.2 * Math.sin(i * 0.37 - t * 1.3);
+    return Math.max(0.05, Math.min(1, v + 0.35));
+  }
+  var mini = document.getElementById("mini-bars");
+  for (var i = 0; i < 40; i++) {
+    var b = document.createElement("i");
+    b.style.height = Math.round(level(i * 1.2, t0) * 100) + "%";
+    mini.appendChild(b);
+  }
+  function grad(ctx, h) {
+    var g = ctx.createLinearGradient(0, h, 0, 0);
+    g.addColorStop(0, "#ff3d6e");
+    g.addColorStop(1, "#ff7a45");
+    return g;
+  }
+  var c = document.getElementById("v-bars"), x = c.getContext("2d"), w = c.width, h = c.height, bw = w / N;
+  x.fillStyle = grad(x, h);
+  for (var i = 0; i < N; i++) {
+    var v = level(i, t0) * (h - 14);
+    x.fillRect(i * bw + 1.5, h - v, bw - 3, v);
+  }
+  c = document.getElementById("v-wave"); x = c.getContext("2d");
+  var g = x.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, "#ffb36b"); g.addColorStop(0.35, "#ff3d6e"); g.addColorStop(0.7, "#6b2a5e"); g.addColorStop(1, "#ff7a45");
+  x.beginPath(); x.moveTo(0, h);
+  for (var px = 0; px <= w; px += 4) {
+    var v = level(px / w * N, t0 + 0.4) * (h - 18);
+    x.lineTo(px, h - v);
+  }
+  x.lineTo(w, h); x.closePath();
+  x.globalAlpha = 0.35; x.fillStyle = g; x.fill();
+  x.globalAlpha = 1; x.lineWidth = 2.5; x.strokeStyle = g; x.stroke();
+  c = document.getElementById("v-blocks"); x = c.getContext("2d");
+  var cols = 24, rows = 10, cw = w / cols, rh = (h - 6) / rows;
+  for (var i = 0; i < cols; i++) {
+    var lit = Math.round(level(i * 2, t0 + 0.9) * rows);
+    for (var r = 0; r < rows; r++) {
+      var on = r < lit;
+      x.fillStyle = on ? "hsl(" + (8 + i * 9) + " 95% 62%)" : "#221e25";
+      x.fillRect(i * cw + 2, h - (r + 1) * rh, cw - 4, rh - 3);
+    }
+  }
+})();
+</script>
+</body>
+</html>
