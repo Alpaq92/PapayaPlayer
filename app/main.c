@@ -66,6 +66,8 @@ static struct {
     int custom_titlebar;     /* borderless window, the top bar is the title bar */
     reaktor_bool autoplay_next;
     int accent_style;        /* controls: 0 minimal, 1 accent (a floating, outlined bar) */
+    int pip;                 /* picture-in-picture: a small window on top */
+    int pip_x, pip_y, pip_w, pip_h; /* the window before it */
     SDL_Texture *cover;      /* the file's embedded picture, or NULL */
     int cover_w, cover_h;
     int vis_style;           /* visualiser: VIS_BARS ... VIS_OFF */
@@ -604,6 +606,54 @@ toggle_fullscreen(void *user)
     touch();
 }
 
+/* The play pill's icon in the stylesheet's ink (dark on papaya): two bars
+ * while playing, else a triangle. */
+static void
+paint_play(App *app, struct reaktor_command_buffer *cv, struct reaktor_rect r, struct reaktor_color ink, void *user)
+{
+    float cx = r.x + r.w / 2.0f, cy = r.y + r.h / 2.0f, s = 7.0f;
+    struct nk_color c = nk_rgba(ink.r, ink.g, ink.b, ink.a);
+
+    (void)app;
+    if (*(const int *)user) {
+        nk_fill_rect(cv, nk_rect(cx - s * 0.8f, cy - s, s * 0.55f, 2.0f * s), 1.0f, c);
+        nk_fill_rect(cv, nk_rect(cx + s * 0.25f, cy - s, s * 0.55f, 2.0f * s), 1.0f, c);
+    } else {
+        nk_fill_triangle(cv, cx - s * 0.6f, cy - s, cx - s * 0.6f, cy + s, cx + s, cy, c);
+    }
+}
+
+/* Picture-in-picture: the window shrinks to a corner of the screen and
+ * stays above the others; again (or Escape) puts it back. */
+static void
+toggle_pip(void *user)
+{
+    SDL_Window *win = reaktor_sdl_window(ui.app);
+
+    (void)user;
+    if (!ui.pip) {
+        SDL_Rect area;
+        int w = 480, h = 270;
+
+        if (fullscreen())
+            SDL_SetWindowFullscreen(win, false);
+        SDL_GetWindowPosition(win, &ui.pip_x, &ui.pip_y);
+        SDL_GetWindowSize(win, &ui.pip_w, &ui.pip_h);
+        if (ui.tex_w > 0 && ui.tex_h > 0)
+            h = w * ui.tex_h / ui.tex_w;
+        SDL_SetWindowAlwaysOnTop(win, true);
+        SDL_SetWindowSize(win, w, h);
+        if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(win), &area))
+            SDL_SetWindowPosition(win, area.x + area.w - w - 24, area.y + area.h - h - 24);
+    } else {
+        SDL_SetWindowAlwaysOnTop(win, false);
+        SDL_SetWindowSize(win, ui.pip_w, ui.pip_h);
+        SDL_SetWindowPosition(win, ui.pip_x, ui.pip_y);
+    }
+    ui.pip = !ui.pip;
+    touch();
+}
+
 static void
 apply_volume(void)
 {
@@ -674,10 +724,12 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         touch();
     }
     REAKTOR_ROW(.w = bw - 16.0f, .h = 36.0f, .ml = x + 8.0f, .mt = y + 4.0f + SEEK_H, .gap = 6.0f) {
+        /* the one filled button: a papaya pill */
         reaktor_button(&(reaktor_button_spec){
             .icon = playing ? "pause" : "play", .name = "play", .tooltip = playing ? "Pause" : "Play",
-            .keys = "Space", .disabled = !ui.player, .flat = 1,
-            .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_pause, NULL } });
+            .keys = "Space", .disabled = !ui.player, .style = ".pill", .paint = paint_play,
+            .paint_user = &playing,
+            .box = { .w = 48.0f, .h = 30.0f, .mt = 3.0f, .mr = 4.0f }, .on_press = { toggle_pause, NULL } });
         reaktor_button(&(reaktor_button_spec){
             .icon = "play-skip-back", .name = "prev", .tooltip = "Previous file", .keys = "P",
             .disabled = ui.list.current <= 0, .flat = 1, .box = { .w = 36.0f, .h = 36.0f },
@@ -710,6 +762,11 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
         reaktor_slider(&(reaktor_slider_spec){
             .name = "volume", .value = &ui.volume, .lo = 0.0f, .hi = 1.0f, .step = 0.05f,
             .box = { .w = 90.0f, .h = 36.0f, .mr = 6.0f } });
+        if (ui.player && papaya_player_video_stream(ui.player))
+            reaktor_button(&(reaktor_button_spec){
+                .icon = "copy-outline", .name = "pip",
+                .tooltip = ui.pip ? "Back to the full window" : "Picture in picture", .flat = 1,
+                .box = { .w = 30.0f, .h = 36.0f }, .on_press = { toggle_pip, NULL } });
         reaktor_button(&(reaktor_button_spec){
             .icon = fullscreen() ? "fullscreen-exit" : "fullscreen-enter", .name = "fullscreen",
             .tooltip = fullscreen() ? "Exit full screen (F)" : "Full screen (F)", .keys = "F", .flat = 1,
@@ -1327,6 +1384,8 @@ player_key(App *app, const SDL_Event *e)
     if (reaktor_chord(e, 0, SDLK_ESCAPE)) {
         if (ui.settings_open || ui.playlist_open)
             ui.settings_open = ui.playlist_open = 0;
+        else if (ui.pip)
+            toggle_pip(NULL);
         else if (fullscreen())
             toggle_fullscreen(NULL);
         else
@@ -1426,6 +1485,8 @@ static const reaktor_asset papaya_assets[] = {
 static const char papaya_css[] =
     /* Reaktor's accent (slider fills, focus, chosen items) comes from links. */
     "a:link { color: #ff7a45; }\n"
+    ".pill { background-color: #ff7a45; color: #1b0e08; border-radius: 15px; }\n"
+    ".pill:hover { background-color: #ff8f61; }\n"
     ".ghost { background-color: rgba(0, 0, 0, 0); color: #f2f2f2; border-radius: 0.5rem; padding: 8px 10px; }\n"
     ".ghost:hover { background-color: var(--button-hover); }\n"
     ".track-title { font-size: 1.6rem; font-weight: 600; }\n"
