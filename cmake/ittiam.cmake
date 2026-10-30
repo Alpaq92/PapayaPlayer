@@ -3,7 +3,9 @@
 #  - per-file -m flags for the SIMD files instead of AVX2 on every file, so
 #    the plain C stays runnable on any x86-64 CPU;
 #  - one shared ithread layer (papaya's Win32 one on Windows), no libm there;
-#  - plain C selectors on non-x86 CPUs until their ARM asm is wired up.
+#  - their ARMv8 assembly and NEON on 64-bit ARM Linux / BSD; the assembly
+#    is ELF-only (.type, :got: relocations, no symbol underscores), so macOS
+#    (as upstream does, see DARWIN) and Windows on ARM keep plain C selectors.
 set(_itt_root "${PROJECT_SOURCE_DIR}/third_party")
 set(_itt_shim "${PROJECT_SOURCE_DIR}/papaya/decode/sw/ittiam")
 
@@ -12,11 +14,21 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
 else()
     set(_itt_x86 OFF)
 endif()
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$" AND NOT APPLE AND NOT WIN32)
+    set(_itt_arm64 ON)
+    enable_language(ASM)
+else()
+    set(_itt_arm64 OFF)
+endif()
 
 # Reads <lib>'s source lists; their include_directories() calls are undone.
 function(_itt_sources root out)
     get_directory_property(_saved INCLUDE_DIRECTORIES)
-    set(SYSTEM_PROCESSOR x86_64)
+    if(_itt_arm64)
+        set(SYSTEM_PROCESSOR aarch64)
+    else()
+        set(SYSTEM_PROCESSOR x86_64)
+    endif()
     set(AVC_ROOT "${root}")
     set(HEVC_ROOT "${root}")
     set(_srcs "")
@@ -33,7 +45,8 @@ function(_itt_sources root out)
         include("${CMAKE_BINARY_DIR}/ittiam/${_copy}.cmake")
     endforeach()
     set_directory_properties(PROPERTIES INCLUDE_DIRECTORIES "${_saved}")
-    foreach(v LIBAVC_COMMON_SRCS LIBAVCDEC_SRCS LIBHEVC_COMMON_SRCS LIBHEVCDEC_SRCS)
+    foreach(v LIBAVC_COMMON_SRCS LIBAVCDEC_SRCS LIBHEVC_COMMON_SRCS LIBHEVCDEC_SRCS
+              LIBAVC_COMMON_ASMS LIBAVCDEC_ASMS LIBHEVC_COMMON_ASMS LIBHEVCDEC_ASMS)
         list(APPEND _srcs ${${v}})
     endforeach()
     list(REMOVE_DUPLICATES _srcs)
@@ -76,6 +89,11 @@ function(_itt_library name root)
                 set_property(SOURCE ${src} APPEND PROPERTY COMPILE_OPTIONS -msse4.2)
             endif()
         endforeach()
+    elseif(_itt_arm64)
+        target_include_directories(${name} PRIVATE "${root}/common/arm" "${root}/common/arm64"
+                                   "${root}/common/armv8" "${root}/decoder/arm" "${root}/decoder/arm64")
+        target_compile_definitions(${name} PRIVATE ARMV8 DEFAULT_ARCH=D_ARCH_ARMV8_GENERIC ENABLE_NEON)
+        target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:C>:-march=armv8-a>)
     else()
         target_include_directories(${name} PRIVATE "${root}/common/arm")
         target_compile_definitions(${name} PRIVATE ARMV8 DEFAULT_ARCH=D_ARCH_NA)
@@ -93,14 +111,14 @@ function(_itt_library name root)
 endfunction()
 
 _itt_sources("${_itt_root}/libavc" _avc_srcs common/common.cmake decoder/libavcdec.cmake)
-if(NOT _itt_x86)
+if(NOT _itt_x86 AND NOT _itt_arm64)
     list(APPEND _avc_srcs "${_itt_shim}/avc_generic_arch.c")
 endif()
 _itt_library(papaya_avcdec "${_itt_root}/libavc" SOURCES ${_avc_srcs}
              INCLUDES "${_itt_root}/libavc/common/mvc")
 
 _itt_sources("${_itt_root}/libhevc" _hevc_srcs common/common.cmake decoder/libhevcdec.cmake)
-if(NOT _itt_x86)
+if(NOT _itt_x86 AND NOT _itt_arm64)
     list(APPEND _hevc_srcs "${_itt_shim}/hevc_generic_arch.c")
 endif()
 _itt_library(papaya_hevcdec "${_itt_root}/libhevc" SOURCES ${_hevc_srcs})

@@ -44,7 +44,7 @@ jobs:
   # each successful run refreshes, precompiled headers off (ccache cannot cache
   # SDL's), and Release objects (no PDBs, which ccache cannot cache on Windows).
   build:
-    name: ${{ matrix.os }} ${{ matrix.libs }}
+    name: ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }} ${{ matrix.libs }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -61,6 +61,9 @@ jobs:
           - { os: macos, runner: macos-15, libs: static }
           - { os: linux, runner: ubuntu-24.04, libs: shared }
           - { os: linux, runner: ubuntu-24.04, libs: static }
+          # The Ittiam decoders' ARMv8 assembly runs only here (ELF); macOS
+          # arm64 above covers their plain C path.
+          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm, libs: shared }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,8 +106,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-${{ matrix.os }}-${{ matrix.libs }}-${{ github.run_id }}
-          restore-keys: ccache-${{ matrix.os }}-${{ matrix.libs }}-
+          key: ccache-${{ matrix.os }}${{ matrix.arch }}-${{ matrix.libs }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.os }}${{ matrix.arch }}-${{ matrix.libs }}-
       - name: Build and test (Windows)
         id: build-windows
         if: matrix.os == 'windows'
