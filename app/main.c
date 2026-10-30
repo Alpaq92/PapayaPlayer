@@ -27,7 +27,7 @@
 #define SEEK_H 28.0f
 #define VIS_BANDS 48
 enum { VIS_BARS, VIS_BLOCKS, VIS_WAVE, VIS_OFF };
-enum { VIS_GRADIENT, VIS_ACCENT, VIS_HUE };
+enum { VIS_GRADIENT, VIS_ACCENT, VIS_HUE, VIS_ART };
 #define SEEK_MARGIN 20.0f /* the seek bar's distance from the bar's sides */
 #define ACCENT_INSET 14.0f  /* the accent bar's distance from the window edges */
 #define TOP_H 52.0f
@@ -70,8 +70,9 @@ static struct {
     int pip_x, pip_y, pip_w, pip_h; /* the window before it */
     SDL_Texture *cover;      /* the file's embedded picture, or NULL */
     int cover_w, cover_h;
+    unsigned char art[3];    /* the cover's most vivid colour, for the visualiser */
     int vis_style;           /* visualiser: VIS_BARS ... VIS_OFF */
-    int vis_colour;          /* VIS_GRADIENT, VIS_ACCENT, VIS_HUE */
+    int vis_colour;          /* VIS_GRADIENT ... VIS_ART */
     papaya_spectrum *vis;
     float vis_levels[VIS_BANDS];
     int64_t vis_at;          /* when the levels were last updated */
@@ -331,6 +332,33 @@ close_file(void)
     }
 }
 
+/* The cover's most vivid colour: its pixels averaged, each weighted by its
+ * saturation, so a grey background does not wash it out; then brightened. */
+static void
+art_colour(const unsigned char *px, int w, int h, int stride)
+{
+    double sum[3] = { 0, 0, 0 }, weight = 0, top;
+    int step = w * h > 40000 ? 4 : 1;
+
+    for (int y = 0; y < h; y += step)
+        for (int x = 0; x < w; x += step) {
+            const unsigned char *p = px + (size_t)y * (size_t)stride + (size_t)x * 4; /* B G R A */
+            int hi = p[0] > p[1] ? (p[0] > p[2] ? p[0] : p[2]) : (p[1] > p[2] ? p[1] : p[2]);
+            int lo = p[0] < p[1] ? (p[0] < p[2] ? p[0] : p[2]) : (p[1] < p[2] ? p[1] : p[2]);
+            double sat = (double)(hi - lo) / 255.0, wgt = sat * sat + 0.001;
+
+            sum[0] += p[2] * wgt;
+            sum[1] += p[1] * wgt;
+            sum[2] += p[0] * wgt;
+            weight += wgt;
+        }
+    for (int c = 0; c < 3; c++)
+        sum[c] /= weight > 0 ? weight : 1;
+    top = sum[0] > sum[1] ? (sum[0] > sum[2] ? sum[0] : sum[2]) : (sum[1] > sum[2] ? sum[1] : sum[2]);
+    for (int c = 0; c < 3; c++)
+        ui.art[c] = (unsigned char)(top > 1 ? sum[c] * 240.0 / top : 240);
+}
+
 /* The file's embedded picture as a texture, for the music view. */
 static void
 load_cover(void)
@@ -349,6 +377,7 @@ load_cover(void)
     /* premultiplied ARGB in native order, as SDL's ARGB8888 */
     ui.cover = SDL_CreateTexture(reaktor_sdl_renderer(ui.app), SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
                                  ui.cover_w, ui.cover_h);
+    art_colour(plutovg_surface_get_data(s), ui.cover_w, ui.cover_h, plutovg_surface_get_stride(s));
     if (ui.cover) {
         SDL_UpdateTexture(ui.cover, NULL, plutovg_surface_get_data(s), plutovg_surface_get_stride(s));
         SDL_SetTextureBlendMode(ui.cover, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
@@ -891,7 +920,7 @@ set_titlebar(int custom)
 }
 
 static const char *const vis_styles[] = { "bars", "blocks", "wave", "off" };
-static const char *const vis_colours[] = { "gradient", "accent", "hue" };
+static const char *const vis_colours[] = { "gradient", "accent", "hue", "art" };
 
 /* Which of names a setting holds, or fallback. */
 static int
@@ -918,7 +947,7 @@ load_settings(void)
         ui.accent_style = style && strcmp(style, "accent") == 0;
     }
     ui.vis_style = setting_index("visualiser", vis_styles, 4, VIS_BARS);
-    ui.vis_colour = setting_index("visualiser_colour", vis_colours, 3, VIS_GRADIENT);
+    ui.vis_colour = setting_index("visualiser_colour", vis_colours, 4, VIS_GRADIENT);
     if (ui.custom_titlebar)
         reaktor_set_borderless(ui.app, 1);
 }
@@ -979,7 +1008,7 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
     float pw = w - 16.0f < SETTINGS_W ? w - 16.0f : SETTINGS_W;
     static const char *const style_labels[] = { "Bars", "Blocks", "Wave", "Off" };
-    static const char *const colour_labels[] = { "Gradient", "Accent", "Hue" };
+    static const char *const colour_labels[] = { "Gradient", "Accent", "Hue", "Art" };
     int titlebar = ui.custom_titlebar, style = ui.accent_style, vis = ui.vis_style, colour = ui.vis_colour;
     reaktor_bool next = ui.autoplay_next;
 
@@ -1010,7 +1039,7 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
             }
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
                 setting_label("vis-colour-heading", "Colour", NULL);
-                colour = setting_choice("vis-colour", colour_labels, 3, colour, 80.0f);
+                colour = setting_choice("vis-colour", colour_labels, 4, colour, 64.0f);
             }
         } else {
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
@@ -1133,7 +1162,13 @@ draw_playlist(struct reaktor_context *ctx, float w, float h)
 static struct nk_color
 vis_colour_at(int i, float v)
 {
-    if (ui.vis_colour == VIS_ACCENT)
+    if (ui.vis_colour == VIS_ART && ui.cover) { /* the cover's colour, darker at the foot */
+        float k = 0.45f + 0.55f * v;
+
+        return reaktor_rgba((unsigned char)(ui.art[0] * k), (unsigned char)(ui.art[1] * k),
+                            (unsigned char)(ui.art[2] * k), 255);
+    }
+    if (ui.vis_colour == VIS_ACCENT || ui.vis_colour == VIS_ART)
         return reaktor_rgba(255, 122, 69, 255);
     if (ui.vis_colour == VIS_HUE) { /* round the colour wheel across the bands */
         float hue = (float)i / (float)VIS_BANDS * 6.0f, f = hue - (float)(int)hue;
