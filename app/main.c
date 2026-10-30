@@ -7,7 +7,7 @@
  * P / N previous / next file, M mute, F full screen, O open, Escape close
  * settings, leave full screen or quit.
  *
- * Settings (the cog): native or custom title bar, and whether playback moves
+ * Settings (the cog, right end of the control bar): native or custom title bar, and whether playback moves
  * on to the next file. */
 #include <stdint.h>
 #include <stdio.h>
@@ -41,6 +41,8 @@ static struct {
     int no_p010;             /* renderer lacks P010: show 10-bit as 8-bit */
     uint16_t *p010;          /* 10-bit frames repacked for SDL */
     size_t p010_size;
+    uint8_t *chroma420;      /* 4:2:2 / 4:4:4 chroma averaged down to 4:2:0 */
+    size_t chroma420_size;
 
     unsigned timer;
     float seek_value;        /* slider position, seconds */
@@ -196,11 +198,70 @@ upload_10bit(const papaya_frame *f)
     SDL_UpdateNVTexture(ui.texture, NULL, (const Uint8 *)ui.p010, f->width * 2, (const Uint8 *)uv, cw * 4);
 }
 
-static void
-show_frame(papaya_frame *f)
+/* A 4:2:0 view of a 4:2:2 / 4:4:4 frame: the same luma, chroma averaged
+ * over 1x2 or 2x2 samples. SDL has no planar 4:2:2 / 4:4:4 textures; full
+ * chroma waits for our own shaders. Returns 0, or -1 without memory. */
+static int
+to_420(const papaya_frame *f, papaya_frame *out)
 {
+    int ten = papaya_pix_bytes(f->pix) == 2;
+    int sx = f->pix == PAPAYA_PIX_I444 || f->pix == PAPAYA_PIX_I444_10 ? 2 : 1;
+    int src_w = sx == 2 ? f->width : (f->width + 1) / 2;
+    int cw = (f->width + 1) / 2, ch = (f->height + 1) / 2;
+    size_t row = (size_t)cw << ten, need = row * (size_t)ch * 2;
+
+    if (ui.chroma420_size < need) {
+        free(ui.chroma420);
+        ui.chroma420 = malloc(need);
+        ui.chroma420_size = ui.chroma420 ? need : 0;
+        if (!ui.chroma420)
+            return -1;
+    }
+    *out = *f;
+    out->pix = ten ? PAPAYA_PIX_I420_10 : PAPAYA_PIX_I420;
+    for (int pl = 1; pl <= 2; pl++) {
+        uint8_t *dst = ui.chroma420 + (size_t)(pl - 1) * row * (size_t)ch;
+
+        out->planes[pl] = dst;
+        out->strides[pl] = (int)row;
+        for (int y = 0; y < ch; y++) {
+            int y1 = 2 * y + 1 < f->height ? 2 * y + 1 : 2 * y;
+            const uint8_t *r0 = f->planes[pl] + (size_t)(2 * y) * (size_t)f->strides[pl];
+            const uint8_t *r1 = f->planes[pl] + (size_t)y1 * (size_t)f->strides[pl];
+
+            for (int x = 0; x < cw; x++) {
+                int x0 = x * sx, x1 = sx == 2 && x0 + 1 < src_w ? x0 + 1 : x0;
+                unsigned sum;
+
+                if (ten) {
+                    const uint16_t *a = (const uint16_t *)r0, *b = (const uint16_t *)r1;
+
+                    sum = (unsigned)a[x0] + a[x1] + b[x0] + b[x1];
+                    ((uint16_t *)(dst + (size_t)y * row))[x] = (uint16_t)((sum + 2) >> 2);
+                } else {
+                    sum = (unsigned)r0[x0] + r0[x1] + r1[x0] + r1[x1];
+                    dst[(size_t)y * row + (size_t)x] = (uint8_t)((sum + 2) >> 2);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+static void
+show_frame(papaya_frame *frame)
+{
+    papaya_frame view;
+    const papaya_frame *f = frame;
+
+    if (f->pix == PAPAYA_PIX_I422 || f->pix == PAPAYA_PIX_I444 || f->pix == PAPAYA_PIX_I422_10
+        || f->pix == PAPAYA_PIX_I444_10) {
+        if (to_420(f, &view) != 0)
+            return;
+        f = &view;
+    }
     if (f->pix != PAPAYA_PIX_I420 && f->pix != PAPAYA_PIX_I420_10) {
-        snprintf(ui.error, sizeof ui.error, "4:2:2 / 4:4:4 video is not shown yet");
+        snprintf(ui.error, sizeof ui.error, "cannot show this pixel format");
         return;
     }
     if (ensure_texture(f, ui.no_p010 && f->pix == PAPAYA_PIX_I420_10 ? SDL_COLORSPACE_BT709_LIMITED
@@ -515,6 +576,8 @@ toggle_mute(void *user)
     touch();
 }
 
+static void toggle_settings(void *user);
+
 /* The control bar, over the bottom of the video. */
 static void
 draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
@@ -583,6 +646,12 @@ draw_bar(struct reaktor_context *ctx, float w, float h, int64_t duration)
             .icon = fullscreen() ? "fullscreen-exit" : "fullscreen-enter", .name = "fullscreen",
             .tooltip = fullscreen() ? "Exit full screen (F)" : "Full screen (F)", .keys = "F", .flat = 1,
             .box = { .w = 36.0f, .h = 36.0f, .mt = 6.0f }, .on_press = { toggle_fullscreen, NULL } });
+        REAKTOR_ROW(.w = 36.0f, .h = 36.0f, .mt = 6.0f) {
+            reaktor_box_rect(&ui.cog_rect);
+            reaktor_button(&(reaktor_button_spec){
+                .icon = "settings-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
+                .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_settings, NULL } });
+        }
         if (ui.volume != volume_before) {
             ui.muted = ui.volume <= 0.0f;
             apply_volume();
@@ -694,10 +763,11 @@ load_settings(void)
 }
 
 #define SETTINGS_W 280.0f
+#define SETTINGS_H 148.0f
 
-/* The settings popup, under the cog; a click outside closes it. */
+/* The settings popup, above the cog; a click outside closes it. */
 static void
-draw_settings(struct reaktor_context *ctx, float w)
+draw_settings(struct reaktor_context *ctx, float w, float h)
 {
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
     float x = ctx->input.mouse.pos.x, y = ctx->input.mouse.pos.y;
@@ -708,9 +778,9 @@ draw_settings(struct reaktor_context *ctx, float w)
         ui.settings_open = 0;
         return;
     }
-    ui.settings_rect = reaktor_rect(w - SETTINGS_W - 8.0f, TOP_H + 8.0f, SETTINGS_W, 148.0f);
+    ui.settings_rect = reaktor_rect(w - SETTINGS_W - 8.0f, h - BAR_H - 8.0f - SETTINGS_H, SETTINGS_W, SETTINGS_H);
     reaktor_fill_rect(reaktor_window_get_canvas(ctx), ui.settings_rect, 10.0f, reaktor_rgba(24, 24, 24, 235));
-    REAKTOR_COLUMN(.w = SETTINGS_W - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = TOP_H + 20.0f, .gap = 4.0f) {
+    REAKTOR_COLUMN(.w = SETTINGS_W - 32.0f, .ml = ui.settings_rect.x + 16.0f, .mt = ui.settings_rect.y + 12.0f, .gap = 4.0f) {
         reaktor_label(&(reaktor_label_spec){
             .text = "Title bar", .name = "titlebar-heading", .color = "#9a9a9a", .box = { .h = 24.0f } });
         REAKTOR_ROW(.h = 32.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
@@ -779,12 +849,6 @@ draw_top(struct reaktor_context *ctx, float w)
         REAKTOR_ROW(.weight = 1.0f, .h = TOP_H, .flags = REAKTOR_LAY_FILL_X) {
             if (!reaktor_box_rect(&ui.drag_rect))
                 ui.drag_rect = reaktor_rect(0, 0, 0, 0);
-        }
-        REAKTOR_ROW(.w = 36.0f, .h = 36.0f, .mt = 8.0f) {
-            reaktor_box_rect(&ui.cog_rect);
-            reaktor_button(&(reaktor_button_spec){
-                .icon = "settings-outline", .name = "settings", .tooltip = "Settings", .flat = 1,
-                .box = { .w = 36.0f, .h = 36.0f }, .on_press = { toggle_settings, NULL } });
         }
         if (ui.custom_titlebar) {
             int maximized = (SDL_GetWindowFlags(reaktor_sdl_window(ui.app)) & SDL_WINDOW_MAXIMIZED) != 0;
@@ -862,7 +926,7 @@ page(App *app, struct reaktor_context *ctx, int win_w, int win_h)
             draw_bar(ctx, w, h, duration);
         }
         if (ui.settings_open)
-            draw_settings(ctx, w);
+            draw_settings(ctx, w, h);
     }
 }
 
@@ -942,6 +1006,7 @@ stop(App *app)
     close_file();
     playlist_free(&ui.list);
     free(ui.p010);
+    free(ui.chroma420);
 }
 
 /* Our additions to Reaktor's stylesheet. */
