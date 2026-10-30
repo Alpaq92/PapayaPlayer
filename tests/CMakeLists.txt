@@ -99,3 +99,12 @@ if(PAPAYA_SANITIZE MATCHES "thread")
     set_property(TEST ${_papaya_tests} APPEND PROPERTY ENVIRONMENT
                  "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
 endif()
+
+add_executable(spectrum_test unit/spectrum_test.c)
+target_include_directories(spectrum_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/greatest")
+target_link_libraries(spectrum_test PRIVATE papaya_core)
+if(UNIX)
+    target_link_libraries(spectrum_test PRIVATE m)
+endif()
+papaya_warnings(spectrum_test)
+add_test(NAME spectrum_test COMMAND spectrum_test)

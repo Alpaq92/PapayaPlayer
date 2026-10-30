@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "papaya/player.h"
+#include "papaya/spectrum.h"
 #include "papaya/thread.h"
 #include "papaya/version.h"
 #include "playlist.h"
@@ -23,6 +24,9 @@
 
 #define BAR_H 80.0f  /* the seek bar, then the buttons */
 #define SEEK_H 28.0f
+#define VIS_BANDS 48
+enum { VIS_BARS, VIS_BLOCKS, VIS_WAVE, VIS_OFF };
+enum { VIS_GRADIENT, VIS_ACCENT, VIS_HUE };
 #define SEEK_MARGIN 20.0f /* the seek bar's distance from the bar's sides */
 #define ACCENT_INSET 14.0f  /* the accent bar's distance from the window edges */
 #define TOP_H 52.0f
@@ -61,6 +65,11 @@ static struct {
     int custom_titlebar;     /* borderless window, the top bar is the title bar */
     reaktor_bool autoplay_next;
     int accent_style;        /* controls: 0 minimal, 1 accent (a floating, outlined bar) */
+    int vis_style;           /* visualiser: VIS_BARS ... VIS_OFF */
+    int vis_colour;          /* VIS_GRADIENT, VIS_ACCENT, VIS_HUE */
+    papaya_spectrum *vis;
+    float vis_levels[VIS_BANDS];
+    int64_t vis_at;          /* when the levels were last updated */
     int settings_tab;
     int settings_open;
     int playlist_open;       /* the slide-out list of the folder's files */
@@ -791,6 +800,21 @@ set_titlebar(int custom)
     reaktor_settings_save();
 }
 
+static const char *const vis_styles[] = { "bars", "blocks", "wave", "off" };
+static const char *const vis_colours[] = { "gradient", "accent", "hue" };
+
+/* Which of names a setting holds, or fallback. */
+static int
+setting_index(const char *key, const char *const *names, int count, int fallback)
+{
+    const char *v = reaktor_setting(key);
+
+    for (int i = 0; v && i < count; i++)
+        if (strcmp(v, names[i]) == 0)
+            return i;
+    return fallback;
+}
+
 static void
 load_settings(void)
 {
@@ -803,6 +827,8 @@ load_settings(void)
 
         ui.accent_style = style && strcmp(style, "accent") == 0;
     }
+    ui.vis_style = setting_index("visualiser", vis_styles, 4, VIS_BARS);
+    ui.vis_colour = setting_index("visualiser_colour", vis_colours, 3, VIS_GRADIENT);
     if (ui.custom_titlebar)
         reaktor_set_borderless(ui.app, 1);
 }
@@ -810,7 +836,7 @@ load_settings(void)
 #define SETTINGS_W 380.0f
 #define SETTINGS_H 172.0f
 
-static const char *const settings_tabs[] = { "Playback", "Window" };
+static const char *const settings_tabs[] = { "Playback", "Visualiser", "Window" };
 
 /* A setting's row: its name (and a line under it), then its control. */
 static void
@@ -838,6 +864,22 @@ setting_pair(const char *name_a, const char *a, const char *name_b, const char *
     return value;
 }
 
+/* One of count choices side by side; returns the one chosen. */
+static int
+setting_choice(const char *prefix, const char *const *labels, int count, int value, float width)
+{
+    for (int i = 0; i < count; i++) {
+        reaktor_bool on = value == i;
+        char name[48];
+
+        snprintf(name, sizeof name, "%s-%d", prefix, i);
+        if (reaktor_select(&(reaktor_select_spec){ .label = labels[i], .name = name, .on = &on, .centered = 1,
+                                                  .box = { .w = width, .h = 32.0f } }))
+            value = i;
+    }
+    return value;
+}
+
 /* Settings: a floating box above the options button. A click outside, the
  * button again or Escape closes it. */
 static void
@@ -846,7 +888,9 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     const struct nk_mouse_button *left = &ctx->input.mouse.buttons[NK_BUTTON_LEFT];
     float mx = ctx->input.mouse.pos.x, my = ctx->input.mouse.pos.y;
     float pw = w - 16.0f < SETTINGS_W ? w - 16.0f : SETTINGS_W;
-    int titlebar = ui.custom_titlebar, style = ui.accent_style;
+    static const char *const style_labels[] = { "Bars", "Blocks", "Wave", "Off" };
+    static const char *const colour_labels[] = { "Gradient", "Accent", "Hue" };
+    int titlebar = ui.custom_titlebar, style = ui.accent_style, vis = ui.vis_style, colour = ui.vis_colour;
     reaktor_bool next = ui.autoplay_next;
 
     if (left->clicked && left->down && !inside(ui.settings_rect, mx, my) && !inside(ui.cog_rect, mx, my)) {
@@ -869,6 +913,15 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
                 reaktor_check(&(reaktor_check_spec){ .label = "", .name = "autoplay-next", .on = &next,
                                                      .box = { .w = 32.0f, .h = 32.0f } });
             }
+        } else if (ui.settings_tab == 1) {
+            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                setting_label("vis-heading", "Style", NULL);
+                vis = setting_choice("vis-style", style_labels, 4, vis, 64.0f);
+            }
+            REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
+                setting_label("vis-colour-heading", "Colour", NULL);
+                colour = setting_choice("vis-colour", colour_labels, 3, colour, 80.0f);
+            }
         } else {
             REAKTOR_ROW(.h = 40.0f, .gap = 6.0f, .flags = REAKTOR_LAY_FILL_X) {
                 setting_label("titlebar-heading", "Title bar", "The system's, or the top bar in its place");
@@ -881,6 +934,16 @@ draw_settings(struct reaktor_context *ctx, float w, float h)
     if (style != ui.accent_style) {
         ui.accent_style = style;
         reaktor_setting_set("controls", style ? "accent" : "minimal");
+        reaktor_settings_save();
+    }
+    if (vis != ui.vis_style) {
+        ui.vis_style = vis;
+        reaktor_setting_set("visualiser", vis_styles[vis]);
+        reaktor_settings_save();
+    }
+    if (colour != ui.vis_colour) {
+        ui.vis_colour = colour;
+        reaktor_setting_set("visualiser_colour", vis_colours[colour]);
         reaktor_settings_save();
     }
     if (next != ui.autoplay_next) {
@@ -976,13 +1039,93 @@ draw_playlist(struct reaktor_context *ctx, float w, float h)
     touch();
 }
 
-/* A file with no picture: its art and name where the video would be. Cover
- * art and the visualiser come later; the art is a papaya square for now. */
+/* Band i's colour, at level v (0 at the foot of a bar, 1 at the top). */
+static struct nk_color
+vis_colour_at(int i, float v)
+{
+    if (ui.vis_colour == VIS_ACCENT)
+        return reaktor_rgba(255, 122, 69, 255);
+    if (ui.vis_colour == VIS_HUE) { /* round the colour wheel across the bands */
+        float hue = (float)i / (float)VIS_BANDS * 6.0f, f = hue - (float)(int)hue;
+        unsigned char up = (unsigned char)(60.0f + 195.0f * f), down = (unsigned char)(255.0f - 195.0f * f);
+
+        switch ((int)hue) {
+        case 0: return reaktor_rgba(255, up, 60, 255);
+        case 1: return reaktor_rgba(down, 255, 60, 255);
+        case 2: return reaktor_rgba(60, 255, up, 255);
+        case 3: return reaktor_rgba(60, down, 255, 255);
+        case 4: return reaktor_rgba(up, 60, 255, 255);
+        default: return reaktor_rgba(255, 60, down, 255);
+        }
+    }
+    /* guava at the foot to papaya at the top */
+    return reaktor_rgba(255, (unsigned char)(61.0f + 61.0f * v), (unsigned char)(110.0f - 41.0f * v), 255);
+}
+
+/* The visualiser in r: the newest sound's levels, falling while paused. */
+static void
+draw_visualiser(struct reaktor_context *ctx, struct reaktor_rect r)
+{
+    static float samples[PAPAYA_SPECTRUM_WINDOW];
+    struct nk_command_buffer *cv = reaktor_window_get_canvas(ctx);
+    int64_t now = papaya_time_us();
+    float dt = ui.vis_at ? (float)(now - ui.vis_at) / 1e6f : 0.0f, step = r.w / (float)VIS_BANDS, rest = 0.0f;
+    int rate = 0;
+
+    if (!ui.vis && !(ui.vis = papaya_spectrum_new(VIS_BANDS)))
+        return;
+    if (dt > 0.25f)
+        dt = 0.25f;
+    ui.vis_at = now;
+    if (!papaya_player_paused(ui.player))
+        rate = papaya_player_scope(ui.player, samples, PAPAYA_SPECTRUM_WINDOW);
+    papaya_spectrum_update(ui.vis, rate ? samples : NULL, rate, dt, ui.vis_levels);
+    for (int i = 0; i < VIS_BANDS; i++) {
+        float v = ui.vis_levels[i], bh = v * r.h, bx = r.x + (float)i * step;
+
+        rest += v;
+        if (ui.vis_style == VIS_BARS && bh >= 1.0f) {
+            struct reaktor_rect bar = reaktor_rect(bx + 1.0f, r.y + r.h - bh, step - 3.0f, bh);
+
+            if (ui.vis_colour == VIS_GRADIENT) { /* corners: top left, top right, bottom right, bottom left */
+                struct nk_color foot = vis_colour_at(i, 0.0f), tip = vis_colour_at(i, v);
+
+                nk_fill_rect_multi_color(cv, bar, tip, tip, foot, foot);
+            } else {
+                reaktor_fill_rect(cv, bar, 2.0f, vis_colour_at(i, v));
+            }
+        } else if (ui.vis_style == VIS_BLOCKS) {
+            int lit = (int)(v * 16.0f + 0.5f);
+            float bk = r.h / 16.0f;
+
+            for (int k = 0; k < 16; k++) {
+                struct nk_color c = k < lit ? vis_colour_at(i, (float)k / 15.0f)
+                                            : reaktor_rgba(255, 255, 255, 18); /* unlit blocks show faintly */
+
+                reaktor_fill_rect(cv, reaktor_rect(bx + 1.0f, r.y + r.h - (float)(k + 1) * bk + 1.0f, step - 3.0f, bk - 2.0f),
+                                  1.0f, c);
+            }
+        } else if (ui.vis_style == VIS_WAVE && i > 0) {
+            float pv = ui.vis_levels[i - 1];
+
+            reaktor_stroke_line(cv, bx - step / 2.0f, r.y + r.h - pv * r.h, bx + step / 2.0f, r.y + r.h - bh, 2.5f,
+                                vis_colour_at(i, v));
+        }
+    }
+    /* paused, but the bars are still falling: draw again */
+    if (rest > 0.0f && papaya_player_paused(ui.player))
+        reaktor_wake(ui.app);
+}
+
+/* A file with no picture: its art, name and visualiser where the video
+ * would be. The art is a papaya square until cover art is read. */
 static void
 draw_music(struct reaktor_context *ctx, float w, float h)
 {
     float art = h * 0.32f < 220.0f ? h * 0.32f : 220.0f, top = (h - BAR_H - art) / 2.0f, x = 48.0f;
+    float tx = x + art + 24.0f, tw = w - tx - 48.0f;
     const char *name = ui.list.current >= 0 ? ui.list.files[ui.list.current] : ui.title;
+    int vis = ui.vis_style != VIS_OFF && tw > 80.0f;
 
     if (top < TOP_H + 8.0f)
         top = TOP_H + 8.0f;
@@ -990,12 +1133,15 @@ draw_music(struct reaktor_context *ctx, float w, float h)
                       reaktor_rgba(255, 122, 69, 255));
     reaktor_fill_rect(reaktor_window_get_canvas(ctx), reaktor_rect(x + art * 0.3f, top + art * 0.3f, art * 0.4f, art * 0.4f),
                       art * 0.2f, reaktor_rgba(255, 61, 110, 255));
-    REAKTOR_COLUMN(.w = w - x - art - 72.0f, .ml = x + art + 24.0f, .mt = top + art / 2.0f - 30.0f, .gap = 4.0f) {
+    /* the names centred beside the art, or at its top above the visualiser */
+    REAKTOR_COLUMN(.w = tw, .ml = tx, .mt = vis ? top + 4.0f : top + art / 2.0f - 30.0f, .gap = 4.0f) {
         reaktor_label(&(reaktor_label_spec){ .text = ui.list.count ? ui.list.name : "", .color = "--text-muted",
                                              .box = { .h = 22.0f, .flags = REAKTOR_LAY_FILL_X } });
         reaktor_label(&(reaktor_label_spec){ .text = name, .name = "track-title", .color = "#f2f2f2",
                                              .style = ".track-title", .box = { .h = 34.0f, .flags = REAKTOR_LAY_FILL_X } });
     }
+    if (vis)
+        draw_visualiser(ctx, reaktor_rect(tx, top + 76.0f, tw < 720.0f ? tw : 720.0f, art - 76.0f));
 }
 
 /* The top bar: the folder (open file / folder, recent folders) and the file

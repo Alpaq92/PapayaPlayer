@@ -46,6 +46,10 @@ PAPAYA_EXPORT void papaya_audio_out_set_paused(papaya_audio_out *ao, int paused)
 PAPAYA_EXPORT void papaya_audio_out_set_volume(papaya_audio_out *ao, float volume);
 /* Microseconds of audio queued and not yet played. */
 PAPAYA_EXPORT int64_t papaya_audio_out_queued(papaya_audio_out *ao);
+/* The newest n (<= 4096) samples played, mixed to mono and before the
+ * volume, oldest first, for a visualiser; any thread. Returns their rate, or
+ * 0 if nothing has played yet (out is then zeros) or n is out of range. */
+PAPAYA_EXPORT int papaya_audio_out_scope(papaya_audio_out *ao, float *out, int n);
 /* Device latency in microseconds (its own buffer). */
 PAPAYA_EXPORT int64_t papaya_audio_out_latency(const papaya_audio_out *ao);
 

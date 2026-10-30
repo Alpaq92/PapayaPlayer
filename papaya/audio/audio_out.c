@@ -8,6 +8,8 @@
 #include "miniaudio.h"
 #include "papaya/queue.h"
 
+#define SCOPE_N 4096 /* what the visualiser may read: mono, before the volume */
+
 typedef struct {
     papaya_frame *frame;
     int serial;
@@ -31,7 +33,27 @@ struct papaya_audio_out {
     atomic_int serial;     /* frames with another serial are stale */
     atomic_int paused;
     _Atomic float volume;
+
+    /* The newest samples played, a ring; the callback holds the lock only to
+     * write a period, a reader only to copy. */
+    atomic_flag scope_lock;
+    float scope[SCOPE_N];
+    int scope_pos;
+    int scope_rate;
 };
+
+static void
+scope_lock(papaya_audio_out *ao)
+{
+    while (atomic_flag_test_and_set_explicit(&ao->scope_lock, memory_order_acquire))
+        ;
+}
+
+static void
+scope_unlock(papaya_audio_out *ao)
+{
+    atomic_flag_clear_explicit(&ao->scope_lock, memory_order_release);
+}
 
 static void
 free_queued(void *item)
@@ -103,6 +125,17 @@ on_data(ma_device *device, void *output, const void *input, ma_uint32 count)
 
             for (size_t i = 0; i < total; i++)
                 dst[i] = src[i] * volume;
+            scope_lock(ao);
+            for (int i = 0; i < n; i++) {
+                float sum = 0.0f;
+
+                for (int c = 0; c < ao->channels; c++)
+                    sum += src[(size_t)i * (size_t)ao->channels + (size_t)c];
+                ao->scope[ao->scope_pos] = sum / (float)ao->channels;
+                ao->scope_pos = (ao->scope_pos + 1) % SCOPE_N;
+            }
+            ao->scope_rate = ao->rate;
+            scope_unlock(ao);
         }
         ao->offset += n;
         done += (ma_uint32)n;
@@ -163,6 +196,7 @@ papaya_audio_out_open(const papaya_audio_out_config *config)
     ao->rate = config->sample_rate;
     ao->clock = config->clock;
     atomic_init(&ao->volume, 1.0f);
+    atomic_flag_clear(&ao->scope_lock);
     ao->frames = papaya_queue_new((papaya_queue_limits){ .max_duration = buffer }, free_queued);
     if (!ao->frames)
         goto fail;
@@ -276,6 +310,21 @@ int64_t
 papaya_audio_out_queued(papaya_audio_out *ao)
 {
     return papaya_queue_duration(ao->frames);
+}
+
+int
+papaya_audio_out_scope(papaya_audio_out *ao, float *out, int n)
+{
+    int rate;
+
+    if (n < 1 || n > SCOPE_N)
+        return 0;
+    scope_lock(ao);
+    for (int i = 0, at = (ao->scope_pos - n + SCOPE_N) % SCOPE_N; i < n; i++, at = (at + 1) % SCOPE_N)
+        out[i] = ao->scope[at];
+    rate = ao->scope_rate;
+    scope_unlock(ao);
+    return rate;
 }
 
 int64_t

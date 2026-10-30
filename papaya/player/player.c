@@ -436,6 +436,12 @@ papaya_player_position(papaya_player *p)
 int64_t papaya_player_duration(papaya_player *p) { return papaya_demux_duration(p->demux); }
 int papaya_player_dropped(papaya_player *p) { return atomic_load(&p->dropped); }
 
+int
+papaya_player_scope(papaya_player *p, float *out, int n)
+{
+    return p->ao ? papaya_audio_out_scope(p->ao, out, n) : 0;
+}
+
 const papaya_stream_info *
 papaya_player_video_stream(papaya_player *p)
 {

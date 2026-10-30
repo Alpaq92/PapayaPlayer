@@ -6,6 +6,7 @@ add_library(papaya_core
     core/clock.c
     core/media.c
     core/queue.c
+    core/spectrum.c
     core/thread.c
     core/version.c
     audio/audio_out.c
@@ -50,6 +51,9 @@ target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_avcdec> $<LINK_ONLY
 set_source_files_properties(decode/sw/xaac/aac.c PROPERTIES INCLUDE_DIRECTORIES
     "${PROJECT_SOURCE_DIR}/third_party/libxaac/common;${PROJECT_SOURCE_DIR}/third_party/libxaac/decoder")
 target_link_libraries(papaya_core PRIVATE $<LINK_ONLY:papaya_xaacdec> papaya_minimp3)
+if(UNIX)
+    target_link_libraries(papaya_core PRIVATE m) # spectrum.c
+endif()
 if(NOT PAPAYA_SHARED_LIBS)
     target_compile_definitions(papaya_core PUBLIC PAPAYA_STATIC_DEFINE)
 endif()
