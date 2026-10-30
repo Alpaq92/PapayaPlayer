@@ -59,6 +59,8 @@ typedef struct papaya_stream_info {
     int sample_rate, channels, bits_per_sample;
     int64_t codec_delay;       /* microseconds to drop at the start (Opus pre-skip) */
     int64_t seek_preroll;      /* microseconds to decode before a seek target */
+    int64_t gapless_end;       /* microseconds; audio from here on is encoder
+                                * padding (MP4 edit list, iTunSMPB). 0: none */
 } papaya_stream_info;
 
 enum {

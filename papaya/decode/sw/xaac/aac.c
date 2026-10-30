@@ -4,7 +4,10 @@
  * unit. For AAC-LC and HE-AAC the decoder finishes its init only on the
  * first access unit, which it reads ahead of decoding without consuming.
  * libxaac's own flush resets most of its configuration, so a flush
- * builds a fresh decoder from the saved config instead, as Android does. */
+ * builds a fresh decoder from the saved config instead, as Android does.
+ * Gapless: samples before time 0 (the encoder's priming, placed there by an
+ * edit list or iTunSMPB) are dropped, and so are those from the stream's
+ * gapless_end on. */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +40,7 @@ typedef struct {
     uint8_t *config;
     size_t config_size;
     int64_t next_pts;
+    int64_t gapless_end; /* microseconds, 0 if none */
 } aac_ctx;
 
 static int
@@ -174,6 +178,7 @@ aac_open(const papaya_stream_info *s, papaya_frame_pool *pool)
         return NULL;
     c->pool = pool;
     c->next_pts = PAPAYA_NOPTS;
+    c->gapless_end = s->gapless_end;
     c->config = malloc(s->extradata_size);
     if (!c->config)
         goto fail;
@@ -186,6 +191,13 @@ fail:
     free(c->config);
     free(c);
     return NULL;
+}
+
+/* Microseconds to the nearest sample at rate. */
+static int64_t
+round_samples(int64_t us, int rate)
+{
+    return (us * rate + (us < 0 ? -500000 : 500000)) / 1000000;
 }
 
 static int
@@ -230,17 +242,28 @@ aac_decode_packet(void *ctx, const papaya_packet *p, void (*emit)(void *, papaya
     n = out_bytes / (int)sizeof(int16_t) / channels;
     if (n <= 0)
         return 0;
-    f = papaya_frame_get_audio(c->pool, PAPAYA_SAMPLE_F32, channels, rate, n);
-    if (!f)
-        return -1;
-    in = c->d.out;
-    out = (float *)f->audio[0];
-    for (int i = 0; i < n * channels; i++)
-        out[i] = (float)in[i] * (1.0f / 32768.0f);
-    f->pts = c->next_pts;
-    f->duration = (int64_t)n * 1000000 / rate;
-    if (c->next_pts != PAPAYA_NOPTS)
-        c->next_pts += f->duration;
+    {
+        /* Whole samples, so the trims are exact. */
+        int64_t start = c->next_pts == PAPAYA_NOPTS ? 0 : round_samples(c->next_pts, rate);
+        int64_t end = c->gapless_end > 0 ? round_samples(c->gapless_end, rate) : INT64_MAX;
+        int skip = start < 0 ? (int)(-start < n ? -start : n) : 0, keep = n - skip;
+
+        if (c->next_pts != PAPAYA_NOPTS)
+            c->next_pts += (int64_t)n * 1000000 / rate;
+        if (start + n > end)
+            keep = end - start > skip ? (int)(end - start - skip) : 0;
+        if (keep <= 0)
+            return 0;
+        f = papaya_frame_get_audio(c->pool, PAPAYA_SAMPLE_F32, channels, rate, keep);
+        if (!f)
+            return -1;
+        in = c->d.out + (size_t)skip * (size_t)channels;
+        out = (float *)f->audio[0];
+        for (int i = 0; i < keep * channels; i++)
+            out[i] = (float)in[i] * (1.0f / 32768.0f);
+        f->pts = c->next_pts == PAPAYA_NOPTS ? PAPAYA_NOPTS : (start + skip) * 1000000 / rate;
+        f->duration = (int64_t)keep * 1000000 / rate;
+    }
     emit(sink, f);
     return 0;
 }

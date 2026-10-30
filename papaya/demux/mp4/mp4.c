@@ -12,6 +12,7 @@
  * tfhd gives a base offset. Live, unbounded files come with HLS / DASH.
  *
  * Licensed under the Apache License, Version 2.0. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,6 +39,7 @@ typedef struct {
     sample *samples;
     uint32_t count, cap, next;
     int64_t edit_shift;   /* subtracted from every time */
+    int has_edit;         /* the edit list placed the start */
     int64_t end_dts;      /* where the next fragment sample starts, before the shift */
     uint32_t trex_duration, trex_size, trex_flags; /* fragment defaults */
     uint8_t *extradata;
@@ -544,7 +546,8 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
 {
     rd mdia, mdhd, hdlr, minf, stbl, stsd, edts, elst, tkhd;
     uint32_t handler, timescale, version;
-    int64_t edit_shift = 0;
+    int64_t edit_shift = 0, edit_end = 0;
+    int has_edit = 0;
     papaya_stream_info *s;
     track *t;
     char lang[4] = { 0 };
@@ -590,6 +593,9 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
                 continue;
             }
             edit_shift += media_time;
+            has_edit = 1;
+            if (m->movie_timescale && dur)
+                edit_end = (int64_t)(dur * 1000000 / m->movie_timescale);
             break;
         }
     }
@@ -599,6 +605,7 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
     t->stream = -1;
     t->timescale = timescale;
     t->edit_shift = edit_shift;
+    t->has_edit = has_edit;
     if (find_box(trak, FOURCC('t', 'k', 'h', 'd'), &tkhd)) {
         uint32_t v = u8(&tkhd);
 
@@ -623,9 +630,81 @@ parse_trak(mp4 *m, papaya_demuxer *d, rd trak)
         memcpy(s->language, lang, 4);
     if (t->count)
         s->duration = (t->samples[t->count - 1].pts + 1) * 1000000 / timescale;
+    /* Audio past the edit is the encoder's padding. An empty edit before
+     * it delays the track, and the end with it. */
+    if (handler == FOURCC('s', 'o', 'u', 'n') && edit_end > 0)
+        s->gapless_end = edit_end + (edit_shift < 0 ? -edit_shift * 1000000 / timescale : 0);
     t->stream = s->index;
     t->info = s;
     m->track_count++;
+}
+
+/* iTunes' gapless tag, moov/udta/meta/ilst/"----" named iTunSMPB: hex
+ * fields " 00000000 <delay> <padding> <total samples> ...". Used for the first
+ * AAC track when no edit list placed its start. */
+static void
+parse_itunsmpb(mp4 *m, rd moov)
+{
+    rd udta, meta, ilst, item, part;
+    uint32_t type;
+    char text[160];
+    unsigned long long field[4];
+    track *t = NULL;
+
+    if (!find_box(moov, FOURCC('u', 'd', 't', 'a'), &udta) || !find_box(udta, FOURCC('m', 'e', 't', 'a'), &meta))
+        return;
+    if (left(&meta) >= 4 && !meta.p[0] && !meta.p[1] && !meta.p[2] && !meta.p[3])
+        skip(&meta, 4); /* ISO meta is a full box; QuickTime's is not */
+    if (!find_box(meta, FOURCC('i', 'l', 's', 't'), &ilst))
+        return;
+    for (int i = 0; i < m->track_count; i++)
+        if (m->tracks[i].info && m->tracks[i].info->codec == PAPAYA_CODEC_AAC) {
+            t = &m->tracks[i];
+            break;
+        }
+    if (!t || t->has_edit || !t->info->sample_rate)
+        return;
+    while (next_box(&ilst, &type, &item)) {
+        int named = 0;
+
+        if (type != FOURCC('-', '-', '-', '-'))
+            continue;
+        while (next_box(&item, &type, &part)) {
+            size_t n;
+
+            if (type == FOURCC('n', 'a', 'm', 'e')) {
+                skip(&part, 4);
+                named = left(&part) == 8 && memcmp(part.p, "iTunSMPB", 8) == 0;
+            } else if (type == FOURCC('d', 'a', 't', 'a') && named) {
+                int64_t rate = t->info->sample_rate, delay;
+                const uint8_t *asc = t->extradata;
+
+                skip(&part, 8); /* type, locale */
+                n = (size_t)left(&part);
+                if (n >= sizeof text)
+                    n = sizeof text - 1;
+                memcpy(text, part.p, n);
+                text[n] = 0;
+                if (sscanf(text, "%llx %llx %llx %llx", &field[0], &field[1], &field[2], &field[3]) != 4)
+                    return;
+                /* The counts are output samples: twice the core rate with
+                 * explicitly signalled SBR (HE-AAC, object type 5 or 29). */
+                if (asc && t->extradata_size >= 1 && ((asc[0] >> 3) == 5 || (asc[0] >> 3) == 29))
+                    rate *= 2;
+                delay = (int64_t)(field[1] * t->timescale / (uint64_t)rate);
+                if (delay <= 0 || field[3] == 0)
+                    return;
+                for (uint32_t s = 0; s < t->count; s++) {
+                    t->samples[s].dts -= delay;
+                    t->samples[s].pts -= delay;
+                }
+                t->edit_shift += delay;
+                t->info->gapless_end = (int64_t)(field[3] * 1000000 / (uint64_t)rate);
+                t->info->duration = t->info->gapless_end;
+                return;
+            }
+        }
+    }
 }
 
 /* ---- top-level boxes ---------------------------------------------------------- */
@@ -918,6 +997,7 @@ mp4_open(papaya_demuxer *d, papaya_io *io)
         while (next_box(&r, &type, &b))
             if (type == FOURCC('t', 'r', 'a', 'k'))
                 parse_trak(m, d, b);
+        parse_itunsmpb(m, (rd){ moov, moov + moov_size, 0 });
         if (m->fragmented)
             parse_mvex(m, mvex);
     }

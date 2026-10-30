@@ -1,6 +1,8 @@
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "aac_encode.h"
 #include "greatest.h"
 #include "md5.h"
 #include "papaya/decode.h"
@@ -481,8 +483,234 @@ truncated_mp4_is_safe(builder build)
     PASS();
 }
 
+/* ---- AAC gapless: an edit list, or iTunes' iTunSMPB tag ------------------ */
+
+enum { AAC_RATE = 48000, AAC_N = 50000, AAC_DELAY = 2048 };
+
+typedef struct {
+    buf units;
+    uint32_t sizes[256];
+    int count;
+} aac_units;
+
+static void
+add_unit(void *user, const unsigned char *data, int size)
+{
+    aac_units *u = user;
+
+    if (u->count < 256) {
+        put(&u->units, data, (size_t)size);
+        u->sizes[u->count++] = (uint32_t)size;
+    }
+}
+
+static void
+desc(buf *b, int tag, size_t len)
+{
+    uint8_t h[2] = { (uint8_t)tag, (uint8_t)len };
+
+    put(b, h, 2);
+}
+
+/* One mp4a track, every access unit in one chunk. itunes: the start and
+ * length in iTunSMPB, else in an edit list. */
+static void
+build_m4a(buf *b, const aac_units *u, const unsigned char *asc, int asc_size, int itunes)
+{
+    size_t moov, trak, mdia, minf, stbl, stsd, entry, esds, stco_at;
+    uint32_t total = (uint32_t)u->count * 1024;
+
+    put(b, "\0\0\0\x14" "ftypM4A \0\0\0\0M4A ", 20);
+    moov = open_box(b, "moov");
+    {
+        size_t mvhd = open_box(b, "mvhd");
+
+        zeros(b, 12);
+        be32(b, AAC_RATE);
+        be32(b, total);
+        zeros(b, 80);
+        close_box(b, mvhd);
+    }
+    trak = open_box(b, "trak");
+    if (!itunes) {
+        size_t edts = open_box(b, "edts"), elst = open_box(b, "elst");
+
+        zeros(b, 4);
+        be32(b, 1);
+        be32(b, AAC_N);     /* duration, movie timescale */
+        be32(b, AAC_DELAY); /* media time: after the priming */
+        be32(b, 0x10000);
+        close_box(b, elst);
+        close_box(b, edts);
+    }
+    mdia = open_box(b, "mdia");
+    {
+        size_t mdhd = open_box(b, "mdhd"), hdlr;
+
+        zeros(b, 12);
+        be32(b, AAC_RATE);
+        be32(b, total);
+        be16(b, 0x55c4);
+        zeros(b, 2);
+        close_box(b, mdhd);
+        hdlr = open_box(b, "hdlr");
+        zeros(b, 8);
+        put(b, "soun", 4);
+        zeros(b, 13);
+        close_box(b, hdlr);
+    }
+    minf = open_box(b, "minf");
+    stbl = open_box(b, "stbl");
+    stsd = open_box(b, "stsd");
+    zeros(b, 4);
+    be32(b, 1);
+    entry = open_box(b, "mp4a");
+    zeros(b, 6);
+    be16(b, 1);
+    zeros(b, 8);
+    be16(b, 2);  /* channels */
+    be16(b, 16); /* sample size */
+    zeros(b, 4);
+    be32(b, (uint32_t)AAC_RATE << 16);
+    esds = open_box(b, "esds");
+    zeros(b, 4);
+    desc(b, 0x03, 3 + 2 + 13 + 2 + (size_t)asc_size);
+    zeros(b, 3); /* ES_ID, flags */
+    desc(b, 0x04, 13 + 2 + (size_t)asc_size);
+    put(b, "\x40\x15", 2); /* MPEG-4 audio, audio stream */
+    zeros(b, 11);
+    desc(b, 0x05, (size_t)asc_size);
+    put(b, asc, (size_t)asc_size);
+    close_box(b, esds);
+    close_box(b, entry);
+    close_box(b, stsd);
+    {
+        size_t stts = open_box(b, "stts"), stsc, stsz, stco;
+
+        zeros(b, 4);
+        be32(b, 1);
+        be32(b, (uint32_t)u->count);
+        be32(b, 1024);
+        close_box(b, stts);
+        stsc = open_box(b, "stsc");
+        zeros(b, 4);
+        be32(b, 1);
+        be32(b, 1);
+        be32(b, (uint32_t)u->count);
+        be32(b, 1);
+        close_box(b, stsc);
+        stsz = open_box(b, "stsz");
+        zeros(b, 8);
+        be32(b, (uint32_t)u->count);
+        for (int i = 0; i < u->count; i++)
+            be32(b, u->sizes[i]);
+        close_box(b, stsz);
+        stco = open_box(b, "stco");
+        zeros(b, 4);
+        be32(b, 1);
+        stco_at = b->size;
+        be32(b, 0);
+        close_box(b, stco);
+    }
+    close_box(b, stbl);
+    close_box(b, minf);
+    close_box(b, mdia);
+    close_box(b, trak);
+    if (itunes) {
+        size_t udta = open_box(b, "udta"), meta = open_box(b, "meta"), ilst, item, part;
+        char smpb[120];
+
+        zeros(b, 4);
+        ilst = open_box(b, "ilst");
+        item = open_box(b, "----");
+        part = open_box(b, "mean");
+        zeros(b, 4);
+        put(b, "com.apple.iTunes", 16);
+        close_box(b, part);
+        part = open_box(b, "name");
+        zeros(b, 4);
+        put(b, "iTunSMPB", 8);
+        close_box(b, part);
+        part = open_box(b, "data");
+        be32(b, 1); /* UTF-8 */
+        zeros(b, 4);
+        snprintf(smpb, sizeof smpb, " 00000000 %08X %08X %016X 00000000 00000000", AAC_DELAY,
+                 total - AAC_DELAY - AAC_N, AAC_N);
+        put(b, smpb, strlen(smpb));
+        close_box(b, part);
+        close_box(b, item);
+        close_box(b, ilst);
+        close_box(b, meta);
+        close_box(b, udta);
+    }
+    close_box(b, moov);
+    patch32(b, stco_at, (uint32_t)b->size + 8);
+    {
+        size_t mdat = open_box(b, "mdat");
+
+        put(b, u->units.data, u->units.size);
+        close_box(b, mdat);
+    }
+}
+
+TEST
+aac_gapless_in_m4a(int itunes)
+{
+    static short pcm[AAC_N * 2];
+    unsigned char asc[64];
+    int asc_size = 0;
+    aac_units u = { { 0 }, { 0 }, 0 };
+    buf b = { 0 };
+    papaya_demuxer *d;
+    papaya_frame_pool *pool;
+    papaya_decoder *dec;
+    papaya_packet *p;
+    papaya_frame *f;
+    long samples = 0;
+    int64_t first = PAPAYA_NOPTS;
+
+    for (int i = 0; i < AAC_N; i++)
+        pcm[2 * i] = pcm[2 * i + 1] = (short)(8000 * sin(2 * 3.14159265358979 * 440 * i / AAC_RATE));
+    ASSERT(aac_encode(2, 0, AAC_RATE, 2, 128000, pcm, AAC_N, add_unit, &u, asc, &asc_size) > 0);
+    ASSERT(u.count < 256);
+    build_m4a(&b, &u, asc, asc_size, itunes);
+    d = papaya_demux_open(papaya_io_open_memory(b.data, b.size));
+    ASSERT(d != NULL);
+    ASSERT_EQ(PAPAYA_CODEC_AAC, papaya_demux_stream(d, 0)->codec);
+    ASSERT_EQ((int64_t)AAC_N * 1000000 / AAC_RATE, papaya_demux_stream(d, 0)->gapless_end);
+    pool = papaya_frame_pool_new();
+    dec = papaya_decoder_open(papaya_demux_stream(d, 0), pool);
+    ASSERT(dec != NULL);
+    while (papaya_demux_read(d, &p) == 0) {
+        papaya_decoder_send(dec, p);
+        papaya_packet_free(&p);
+        while (papaya_decoder_receive(dec, &f) == PAPAYA_DECODE_OK) {
+            if (first == PAPAYA_NOPTS)
+                first = f->pts;
+            samples += f->samples;
+            papaya_frame_unref(&f);
+        }
+    }
+    papaya_decoder_send(dec, NULL);
+    while (papaya_decoder_receive(dec, &f) == PAPAYA_DECODE_OK) {
+        samples += f->samples;
+        papaya_frame_unref(&f);
+    }
+    /* The priming is gone and the padding too: exactly the input. */
+    ASSERT_EQ(0, (int)first);
+    ASSERT_EQ((long)AAC_N, samples);
+    papaya_decoder_close(&dec);
+    papaya_frame_pool_release(&pool);
+    papaya_demux_close(&d);
+    free(b.data);
+    free(u.units.data);
+    PASS();
+}
+
 SUITE(mp4)
 {
+    RUN_TEST1(aac_gapless_in_m4a, 0);
+    RUN_TEST1(aac_gapless_in_m4a, 1);
     RUN_TEST1(av1_in_mp4_bit_exact, build_mp4);
     RUN_TEST1(av1_in_mp4_bit_exact, build_fmp4);
     RUN_TEST1(truncated_mp4_is_safe, build_mp4);
